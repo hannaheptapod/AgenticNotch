@@ -374,7 +374,7 @@ class BoringViewCoordinator: ObservableObject {
         recordAgentHistory(info)
         guard Defaults[.agentNotifyEnabled] else { return }
         Task { @MainActor in
-            withAnimation(.smooth) {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.74)) {
                 self.agentActivity.info = info
                 self.agentActivity.show = true
             }

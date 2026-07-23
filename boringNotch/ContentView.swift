@@ -62,7 +62,7 @@ struct ContentView: View {
         var chinWidth: CGFloat = vm.closedNotchSize.width
 
         if coordinator.agentActivity.show && vm.notchState == .closed {
-            chinWidth = 560
+            chinWidth = 420
         } else if coordinator.expandingView.type == .battery && coordinator.expandingView.show
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
@@ -260,9 +260,12 @@ struct ContentView: View {
                     Spacer()
                 } else {
                     if coordinator.agentActivity.show && vm.notchState == .closed {
-                        AgentActivityView(info: coordinator.agentActivity.info, notchGap: vm.closedNotchSize.width + 10)
-                            .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
-                            .transition(.opacity)
+                        AgentActivityView(info: coordinator.agentActivity.info,
+                                          notchGap: vm.closedNotchSize.width + 10,
+                                          notchHeight: vm.effectiveClosedNotchHeight)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.94, anchor: .top).combined(with: .opacity),
+                                removal: .opacity))
                     } else if coordinator.expandingView.type == .battery && coordinator.expandingView.show
                         && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
                     {
@@ -675,11 +678,11 @@ struct AgentActivityView: View {
     let info: AgentActivityInfo
     /// Width of the physical notch to leave black in the middle.
     let notchGap: CGFloat
+    /// Height of the physical notch (top row aligns to it).
+    let notchHeight: CGFloat
 
     private var accent: Color { info.status == .ok ? .green : .red }
-    private var leftText: String {
-        info.title.isEmpty ? "\(info.toolDisplayName) terminó" : info.title
-    }
+    private var header: String { "\(info.toolDisplayName) terminó" }
     private var toolGlyph: String {
         switch info.tool.lowercased() {
         case "claude": return "sparkle"
@@ -692,7 +695,7 @@ struct AgentActivityView: View {
     private var toolChip: some View {
         ZStack(alignment: .bottomTrailing) {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(accent.opacity(0.16))
+                .fill(.white.opacity(0.10))
                 .frame(width: 22, height: 22)
             Image(systemName: toolGlyph)
                 .font(.system(size: 11, weight: .bold))
@@ -707,34 +710,48 @@ struct AgentActivityView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Left of the notch: tool chip + what it did (or "<tool> terminó")
-            HStack(spacing: 8) {
-                toolChip
-                Text(leftText)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 12)
+        VStack(spacing: 0) {
+            // Top row: flanks the physical notch (tool | gap | project)
+            HStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    toolChip
+                    Text(header)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 12)
 
-            // Physical notch gap
-            Rectangle().fill(.black).frame(width: notchGap)
+                Rectangle().fill(.black).frame(width: notchGap)
 
-            // Right of the notch: project with a branch glyph
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.triangle.branch")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(accent.opacity(0.9))
-                Text(info.project.isEmpty ? "—" : info.project)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.gray)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.gray)
+                    Text(info.project.isEmpty ? "—" : info.project)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.gray)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 12)
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.trailing, 12)
+            .frame(height: max(notchHeight, 24))
+
+            // What it did — wraps to 2 lines below the notch.
+            if !info.title.isEmpty {
+                Text(info.title)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 2)
+                    .padding(.bottom, 8)
+            }
         }
     }
 }
