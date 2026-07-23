@@ -61,7 +61,9 @@ struct ContentView: View {
     private var computedChinWidth: CGFloat {
         var chinWidth: CGFloat = vm.closedNotchSize.width
 
-        if coordinator.expandingView.type == .battery && coordinator.expandingView.show
+        if coordinator.agentActivity.show && vm.notchState == .closed {
+            chinWidth = 560
+        } else if coordinator.expandingView.type == .battery && coordinator.expandingView.show
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
             chinWidth = 640
@@ -258,8 +260,8 @@ struct ContentView: View {
                     Spacer()
                 } else {
                     if coordinator.agentActivity.show && vm.notchState == .closed {
-                        AgentActivityView(info: coordinator.agentActivity.info)
-                            .frame(height: vm.effectiveClosedNotchHeight)
+                        AgentActivityView(info: coordinator.agentActivity.info, notchGap: vm.closedNotchSize.width + 10)
+                            .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
                             .transition(.opacity)
                     } else if coordinator.expandingView.type == .battery && coordinator.expandingView.show
                         && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
@@ -667,29 +669,37 @@ struct GeneralDropTargetDelegate: DropDelegate {
 
 struct AgentActivityView: View {
     let info: AgentActivityInfo
+    /// Width of the physical notch to leave black in the middle.
+    let notchGap: CGFloat
 
     private var accent: Color { info.status == .ok ? .green : .red }
     private var icon: String { info.status == .ok ? "checkmark.circle.fill" : "xmark.octagon.fill" }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .foregroundStyle(accent)
-                .font(.system(size: 14, weight: .semibold))
-            VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: 0) {
+            // Left of the notch: tool + status
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .foregroundStyle(accent)
+                    .font(.system(size: 13, weight: .bold))
                 Text("\(info.toolDisplayName) terminó")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
-                if !info.project.isEmpty {
-                    Text(info.project)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.gray)
-                        .lineLimit(1)
-                }
+                    .lineLimit(1)
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 14)
+
+            // Physical notch gap
+            Rectangle().fill(.black).frame(width: notchGap)
+
+            // Right of the notch: project
+            Text(info.project.isEmpty ? " " : info.project)
+                .font(.system(size: 11))
+                .foregroundStyle(.gray)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 14)
         }
-        .padding(.horizontal, 12)
-        .frame(maxHeight: .infinity)
     }
 }
