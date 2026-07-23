@@ -26,6 +26,20 @@ live activity (tool · status · project) and plays a chime whenever **Claude Co
 **Codex** finishes a turn, keeps a history of the last runs, and — like the original —
 still gives you the music control center, calendar, file shelf and HUD replacement.
 
+> **This is a community fork of [boring.notch](https://github.com/TheBoredTeam/boring.notch)**
+> (GPL-3.0). All the original credit goes to TheBoringTeam — AgenticNotch only adds a
+> few extra, AI-agent–focused features on top. If you want the pure music/notch app,
+> use the upstream project.
+
+### What this fork adds
+
+- 🔔 **Agent-finished notifications** — when Claude Code or Codex ends a turn, the notch
+  pops a card with a short summary of *what it did*, the project, and an ok/error status.
+- 🕑 **History** — the last 10 runs, in a dedicated notch tab and in Settings.
+- 📊 **AI limits tab** *(experimental)* — reads local Claude/Codex credentials to show
+  session usage. Works only where those tokens are locally readable.
+- Everything from upstream boring.notch (music, calendar, shelf, HUD replacement…).
+
 See [AgenticNotch — agent notifications](#agenticnotch--agent-notifications) below to wire your agents.
 
 <p align="center">
