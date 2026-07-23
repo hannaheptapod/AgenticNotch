@@ -95,6 +95,32 @@ You can also install using [Homebrew](https://brew.sh). The Homebrew installatio
 brew install --cask TheBoredTeam/boring-notch/boring-notch
 ```
 
+## AgenticNotch — agent notifications
+
+The notch reacts when a CLI AI agent finishes a turn (expands with the tool +
+status + project, and plays a chime). Configure under **Settings → Agents**.
+
+Wire your agents to the bundled script (use the absolute path to it):
+
+**Claude Code** — add to `~/.claude/settings.json`:
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command",
+        "command": "/Users/globalcontact/Proyectos/AgenticNotch/scripts/agenticnotch-notify --tool claude --status ok" } ] }
+    ]
+  }
+}
+```
+`project` defaults to the basename of the hook's working directory.
+
+**Codex** — add to `~/.codex/config.toml`:
+```toml
+notify = ["/Users/globalcontact/Proyectos/AgenticNotch/scripts/agenticnotch-notify", "--tool", "codex", "--status", "ok"]
+```
+Codex appends a JSON event payload as a trailing argument; the script ignores it.
+
 ## Usage
 
 - Launch the app, and voilà—your notch is now the coolest part of your screen.

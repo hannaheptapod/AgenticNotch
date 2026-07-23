@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# agenticnotch-notify — poke AgenticNotch when an AI CLI agent finishes.
+# Usage: agenticnotch-notify --tool claude --status ok [--project NAME] [--title TEXT]
+# Unknown trailing args (e.g. Codex's JSON payload) are ignored.
+set -euo pipefail
+tool=""; status="ok"; project="$(basename "$PWD")"; title=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tool)    tool="${2:-}"; shift 2 ;;
+    --status)  status="${2:-}"; shift 2 ;;
+    --project) project="${2:-}"; shift 2 ;;
+    --title)   title="${2:-}"; shift 2 ;;
+    *)         shift ;;
+  esac
+done
+enc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "${1:-}"; }
+url="agenticnotch://done?tool=$(enc "$tool")&status=$(enc "$status")&project=$(enc "$project")&title=$(enc "$title")"
+open -g "$url"
