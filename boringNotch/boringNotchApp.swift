@@ -72,6 +72,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    // AgenticNotch: route agenticnotch://done URLs to the notch live activity.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let info = AgentActivityInfo.from(url: url) else {
+                NSLog("AgenticNotch: ignored URL \(url.absoluteString)")
+                continue
+            }
+            Task { @MainActor in
+                BoringViewCoordinator.shared.showAgentActivity(info)
+            }
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         NotificationCenter.default.removeObserver(self)
         if let observer = screenLockedObserver {
@@ -280,6 +293,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+
+        #if DEBUG
+        AgentActivityInfo.runSelfCheck()
+        #endif
 
         NotificationCenter.default.addObserver(
             self,

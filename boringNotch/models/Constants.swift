@@ -69,6 +69,12 @@ enum OptionKeyAction: String, CaseIterable, Identifiable, Defaults.Serializable 
 }
 
 extension Defaults.Keys {
+    // MARK: Agents (AgenticNotch)
+    static let agentNotifyEnabled = Key<Bool>("agentNotifyEnabled", default: true)
+    static let agentSoundEnabled = Key<Bool>("agentSoundEnabled", default: true)
+    static let agentSoundName = Key<String>("agentSoundName", default: "Glass")
+    static let agentAutoCollapseSeconds = Key<Double>("agentAutoCollapseSeconds", default: 4)
+
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)
     static let showOnAllDisplays = Key<Bool>("showOnAllDisplays", default: false)

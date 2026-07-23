@@ -10,6 +10,52 @@ import Combine
 import Defaults
 import SwiftUI
 
+// MARK: - Agent activity (AgenticNotch)
+
+enum AgentStatus: String {
+    case ok
+    case error
+}
+
+/// Payload decoded from an `agenticnotch://done?...` URL fired when a CLI AI
+/// agent (Claude Code, Codex, ...) finishes a turn.
+struct AgentActivityInfo: Equatable {
+    var tool: String          // "claude", "codex", ...
+    var status: AgentStatus
+    var project: String       // basename of the agent's cwd; may be ""
+    var title: String         // optional extra line; may be ""
+
+    /// Parse an `agenticnotch://done?...` URL. Returns nil for anything else.
+    static func from(url: URL) -> AgentActivityInfo? {
+        guard url.scheme == "agenticnotch", url.host == "done" else { return nil }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func q(_ name: String) -> String { items.first(where: { $0.name == name })?.value ?? "" }
+        let tool = q("tool")
+        guard !tool.isEmpty else { return nil }
+        let status = AgentStatus(rawValue: q("status")) ?? .ok
+        return AgentActivityInfo(tool: tool, status: status, project: q("project"), title: q("title"))
+    }
+
+    var toolDisplayName: String {
+        switch tool.lowercased() {
+        case "claude": return "Claude"
+        case "codex":  return "Codex"
+        default:       return tool.capitalized
+        }
+    }
+
+    #if DEBUG
+    static func runSelfCheck() {
+        assert(from(url: URL(string: "agenticnotch://done?tool=claude&status=error&project=gcu-api")!)
+               == AgentActivityInfo(tool: "claude", status: .error, project: "gcu-api", title: ""))
+        assert(from(url: URL(string: "agenticnotch://done?tool=codex")!)?.status == .ok)
+        assert(from(url: URL(string: "agenticnotch://done?status=ok")!) == nil)          // no tool
+        assert(from(url: URL(string: "agenticnotch://other?tool=x")!) == nil)            // wrong host
+        assert(from(url: URL(string: "https://example.com")!) == nil)                    // wrong scheme
+    }
+    #endif
+}
+
 enum SneakContentType {
     case brightness
     case volume
@@ -297,4 +343,45 @@ class BoringViewCoordinator: ObservableObject {
     func showEmpty() {
         currentView = .home
     }
+
+    // MARK: - Agent activity (AgenticNotch)
+
+    private var agentActivityTask: Task<Void, Never>?
+
+    @Published var agentActivity = AgentActivityState() {
+        didSet {
+            if agentActivity.show {
+                agentActivityTask?.cancel()
+                let seconds = Defaults[.agentAutoCollapseSeconds]
+                agentActivityTask = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(seconds))
+                    guard let self, !Task.isCancelled else { return }
+                    await MainActor.run {
+                        withAnimation(.smooth) { self.agentActivity.show = false }
+                    }
+                }
+            } else {
+                agentActivityTask?.cancel()
+            }
+        }
+    }
+
+    /// Show an agent-finished live activity in the notch (and optionally chime).
+    func showAgentActivity(_ info: AgentActivityInfo) {
+        guard Defaults[.agentNotifyEnabled] else { return }
+        Task { @MainActor in
+            withAnimation(.smooth) {
+                self.agentActivity.info = info
+                self.agentActivity.show = true
+            }
+        }
+        if Defaults[.agentSoundEnabled] {
+            NSSound(named: NSSound.Name(Defaults[.agentSoundName]))?.play()
+        }
+    }
+}
+
+struct AgentActivityState {
+    var show: Bool = false
+    var info: AgentActivityInfo = AgentActivityInfo(tool: "", status: .ok, project: "", title: "")
 }
