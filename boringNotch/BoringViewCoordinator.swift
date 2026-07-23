@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import Defaults
+import Security
 import SwiftUI
 
 // MARK: - Agent activity (AgenticNotch)
@@ -395,4 +396,171 @@ class BoringViewCoordinator: ObservableObject {
 struct AgentActivityState {
     var show: Bool = false
     var info: AgentActivityInfo = AgentActivityInfo(tool: "", status: .ok, project: "", title: "")
+}
+
+// MARK: - AI quota / limits (AgenticNotch)
+
+struct QuotaWindow: Identifiable {
+    let id = UUID()
+    let label: String         // "5h", "7d", ...
+    let usedPercent: Double    // 0...100
+    let resetAt: Date?
+}
+
+struct ProviderQuota: Identifiable {
+    let id = UUID()
+    let provider: String       // "Claude", "Codex"
+    var windows: [QuotaWindow]
+    var error: String?
+}
+
+/// Reads local Claude/Codex credentials and queries their usage endpoints.
+/// Requires the app to be non-sandboxed (see boringNotch.entitlements).
+@MainActor
+final class AIQuotaManager: ObservableObject {
+    static let shared = AIQuotaManager()
+
+    @Published var providers: [ProviderQuota] = []
+    @Published var isLoading = false
+    @Published var lastUpdated: Date?
+
+    private init() {}
+
+    func refresh() async {
+        isLoading = true
+        let claude = await fetchClaude()
+        let codex = await fetchCodex()
+        providers = [claude, codex].compactMap { $0 }
+        lastUpdated = Date()
+        isLoading = false
+    }
+
+    // MARK: Claude
+
+    private func fetchClaude() async -> ProviderQuota? {
+        guard let token = claudeToken() else {
+            return ProviderQuota(provider: "Claude", windows: [], error: "Sin credenciales")
+        }
+        var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 401 { return ProviderQuota(provider: "Claude", windows: [], error: "Sesión expirada — reloguear") }
+            guard code == 200,
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return ProviderQuota(provider: "Claude", windows: [], error: "API error (\(code))")
+            }
+            return ProviderQuota(provider: "Claude", windows: parseClaudeWindows(json), error: nil)
+        } catch {
+            return ProviderQuota(provider: "Claude", windows: [], error: "Sin red")
+        }
+    }
+
+    private func parseClaudeWindows(_ json: [String: Any]) -> [QuotaWindow] {
+        let labels = ["five_hour": "5h", "seven_day": "7d",
+                      "seven_day_opus": "7d Opus", "seven_day_sonnet": "7d Sonnet"]
+        var out: [QuotaWindow] = []
+        for (key, value) in json {
+            guard let dict = value as? [String: Any] else { continue }
+            guard let util = (dict["utilization"] as? Double) ?? (dict["utilization"] as? NSNumber)?.doubleValue
+            else { continue }
+            let reset = (dict["resets_at"] as? Double) ?? (dict["reset_at"] as? Double)
+            out.append(QuotaWindow(label: labels[key] ?? key.replacingOccurrences(of: "_", with: " "),
+                                   usedPercent: util,
+                                   resetAt: reset.map { Date(timeIntervalSince1970: $0) }))
+        }
+        let order = ["5h", "7d", "7d Sonnet", "7d Opus"]
+        return out.sorted { (order.firstIndex(of: $0.label) ?? 99) < (order.firstIndex(of: $1.label) ?? 99) }
+    }
+
+    private func claudeToken() -> String? {
+        if let json = keychainJSON(service: "Claude Code-credentials"), let t = oauthAccessToken(json) { return t }
+        let path = ("~/.claude/.credentials.json" as NSString).expandingTildeInPath
+        if let data = FileManager.default.contents(atPath: path),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let t = oauthAccessToken(json) { return t }
+        return nil
+    }
+
+    private func oauthAccessToken(_ json: [String: Any]) -> String? {
+        for key in ["claudeAiOauth", "claude.ai_oauth"] {
+            if let o = json[key] as? [String: Any], let t = o["accessToken"] as? String { return t }
+        }
+        return nil
+    }
+
+    // MARK: Codex
+
+    private func fetchCodex() async -> ProviderQuota? {
+        let path = ("~/.codex/auth.json" as NSString).expandingTildeInPath
+        guard let data = FileManager.default.contents(atPath: path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        guard let tokens = json["tokens"] as? [String: Any],
+              let token = tokens["access_token"] as? String, !token.isEmpty else {
+            return ProviderQuota(provider: "Codex", windows: [], error: "Sin token OAuth")
+        }
+        var req = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("codex-cli", forHTTPHeaderField: "User-Agent")
+        if let acc = tokens["account_id"] as? String {
+            req.setValue(acc, forHTTPHeaderField: "ChatGPT-Account-Id")
+        }
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        do {
+            let (respData, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 401 { return ProviderQuota(provider: "Codex", windows: [], error: "Sesión expirada — corré 'codex' para renovar") }
+            guard code == 200,
+                  let j = try JSONSerialization.jsonObject(with: respData) as? [String: Any],
+                  let rate = j["rate_limit"] as? [String: Any] else {
+                return ProviderQuota(provider: "Codex", windows: [], error: "API error (\(code))")
+            }
+            var windows: [QuotaWindow] = []
+            for (key, fallback) in [("primary_window", "5h"), ("secondary_window", "7d")] {
+                guard let w = rate[key] as? [String: Any],
+                      let used = (w["used_percent"] as? Double) ?? (w["used_percent"] as? NSNumber)?.doubleValue
+                else { continue }
+                let reset = (w["reset_at"] as? Double) ?? (w["reset_at"] as? NSNumber)?.doubleValue
+                let secs = (w["limit_window_seconds"] as? Double) ?? (w["limit_window_seconds"] as? NSNumber)?.doubleValue
+                windows.append(QuotaWindow(label: codexLabel(secs) ?? fallback,
+                                           usedPercent: used,
+                                           resetAt: reset.map { Date(timeIntervalSince1970: $0) }))
+            }
+            return ProviderQuota(provider: "Codex", windows: windows, error: nil)
+        } catch {
+            return ProviderQuota(provider: "Codex", windows: [], error: "Sin red")
+        }
+    }
+
+    private func codexLabel(_ secs: Double?) -> String? {
+        guard let s = secs else { return nil }
+        switch Int(s) {
+        case 18000:  return "5h"
+        case 604800: return "7d"
+        default:     return "\(Int(s / 3600))h"
+        }
+    }
+
+    // MARK: Keychain
+
+    private func keychainJSON(service: String) -> [String: Any]? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return json
+    }
 }

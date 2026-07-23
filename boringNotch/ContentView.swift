@@ -357,6 +357,8 @@ struct ContentView: View {
                         ShelfView()
                     case .agents:
                         AgentHistoryView()
+                    case .quota:
+                        AIQuotaView()
                     }
                 }
                 .transition(
@@ -750,5 +752,95 @@ struct AgentHistoryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - AI quota / limits tab (AgenticNotch)
+
+struct AIQuotaView: View {
+    @ObservedObject var quota = AIQuotaManager.shared
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Límites IA")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                Spacer()
+                if quota.isLoading {
+                    ProgressView().controlSize(.small)
+                }
+                Button {
+                    Task { await quota.refresh() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.gray)
+            }
+
+            if quota.providers.isEmpty {
+                Text(quota.isLoading ? "Cargando…" : "Sin datos")
+                    .font(.callout)
+                    .foregroundStyle(.gray)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(quota.providers) { p in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(p.provider)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                if let e = p.error {
+                                    Text(e).font(.caption).foregroundStyle(.orange)
+                                } else if p.windows.isEmpty {
+                                    Text("—").font(.caption).foregroundStyle(.gray)
+                                } else {
+                                    ForEach(p.windows) { w in QuotaBar(window: w) }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            if quota.providers.isEmpty { await quota.refresh() }
+        }
+    }
+}
+
+struct QuotaBar: View {
+    let window: QuotaWindow
+    private var pct: Double { max(0, min(100, window.usedPercent)) }
+    private var color: Color { pct >= 90 ? .red : (pct >= 70 ? .orange : .green) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(window.label).font(.system(size: 10)).foregroundStyle(.gray)
+                Spacer()
+                Text("\(Int(pct))% usado").font(.system(size: 10, weight: .medium)).foregroundStyle(.white)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.1))
+                    Capsule().fill(color).frame(width: geo.size.width * pct / 100)
+                }
+            }
+            .frame(height: 5)
+            if let reset = window.resetAt {
+                Text("reset \(reset.formatted(.relative(presentation: .named)))")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.gray.opacity(0.7))
+            }
+        }
     }
 }
