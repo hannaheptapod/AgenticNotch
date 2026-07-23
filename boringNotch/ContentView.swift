@@ -257,7 +257,11 @@ struct ContentView: View {
                     .padding(.top, 40)
                     Spacer()
                 } else {
-                    if coordinator.expandingView.type == .battery && coordinator.expandingView.show
+                    if coordinator.agentActivity.show && vm.notchState == .closed {
+                        AgentActivityView(info: coordinator.agentActivity.info)
+                            .frame(height: vm.effectiveClosedNotchHeight)
+                            .transition(.opacity)
+                    } else if coordinator.expandingView.type == .battery && coordinator.expandingView.show
                         && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
                     {
                         HStack(spacing: 0) {
@@ -657,4 +661,35 @@ struct GeneralDropTargetDelegate: DropDelegate {
     return ContentView()
         .environmentObject(vm)
         .frame(width: vm.notchSize.width, height: vm.notchSize.height)
+}
+
+// MARK: - Agent activity view (AgenticNotch)
+
+struct AgentActivityView: View {
+    let info: AgentActivityInfo
+
+    private var accent: Color { info.status == .ok ? .green : .red }
+    private var icon: String { info.status == .ok ? "checkmark.circle.fill" : "xmark.octagon.fill" }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(accent)
+                .font(.system(size: 14, weight: .semibold))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(info.toolDisplayName) terminó")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                if !info.project.isEmpty {
+                    Text(info.project)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.gray)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .frame(maxHeight: .infinity)
+    }
 }

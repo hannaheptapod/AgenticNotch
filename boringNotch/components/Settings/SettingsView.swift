@@ -5,6 +5,7 @@
 //  Created by Richard Kunkli on 07/08/2024.
 //
 
+import AppKit
 import AVFoundation
 import Defaults
 import EventKit
@@ -41,6 +42,9 @@ struct SettingsView: View {
                 }
                 NavigationLink(value: "HUD") {
                     Label("HUDs", systemImage: "dial.medium.fill")
+                }
+                NavigationLink(value: "Agents") {
+                    Label("Agents", systemImage: "sparkles")
                 }
                 NavigationLink(value: "Battery") {
                     Label("Battery", systemImage: "battery.100.bolt")
@@ -81,6 +85,8 @@ struct SettingsView: View {
                     CalendarSettings()
                 case "HUD":
                     HUD()
+                case "Agents":
+                    AgentsSettings()
                 case "Battery":
                     Charge()
                 case "Shelf":
@@ -1796,4 +1802,42 @@ func warningBadge(_ text: String, _ description: String) -> some View {
 
 #Preview {
     HUD()
+}
+
+// MARK: - Agents settings (AgenticNotch)
+
+struct AgentsSettings: View {
+    @Default(.agentSoundEnabled) var soundEnabled
+    @Default(.agentSoundName) var soundName
+    @Default(.agentAutoCollapseSeconds) var autoCollapse
+
+    private let systemSounds = ["Glass", "Ping", "Pop", "Blow", "Bottle", "Frog",
+                                "Funk", "Hero", "Morse", "Purr", "Sosumi", "Submarine", "Tink"]
+
+    var body: some View {
+        Form {
+            Section {
+                Defaults.Toggle("Notify when an AI agent finishes", key: .agentNotifyEnabled)
+            } footer: {
+                Text("Wire your agents with scripts/agenticnotch-notify (see README).")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Sound") {
+                Defaults.Toggle("Play a sound", key: .agentSoundEnabled)
+                Picker("Sound", selection: $soundName) {
+                    ForEach(systemSounds, id: \.self) { Text($0).tag($0) }
+                }
+                .disabled(!soundEnabled)
+                Button("Preview") { NSSound(named: NSSound.Name(soundName))?.play() }
+                    .disabled(!soundEnabled)
+            }
+            Section("Timing") {
+                Stepper("Auto-collapse after \(Int(autoCollapse))s",
+                        value: $autoCollapse, in: 1...15)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Agents")
+    }
 }
