@@ -33,7 +33,8 @@ out = ""
 try:
     hook = json.loads(raw)
     tp = os.path.expanduser(hook.get("transcript_path", "") or "")
-    last = ""
+    last = ""        # text of the most recent assistant message (may be empty if tool-only)
+    last_text = ""   # last assistant message that actually had text (fallback)
     if tp:
         with open(tp) as f:
             for line in f:
@@ -46,12 +47,17 @@ try:
                     continue
                 c = msg.get("content")
                 if isinstance(c, list):
-                    for b in c:
-                        if isinstance(b, dict) and b.get("type") == "text" and b.get("text"):
-                            last = b["text"]
-                elif isinstance(c, str) and c:
+                    parts = [b.get("text", "") for b in c
+                             if isinstance(b, dict) and b.get("type") == "text" and b.get("text")]
+                    last = " ".join(parts)
+                elif isinstance(c, str):
                     last = c
-    out = last
+                else:
+                    last = ""
+                if last.strip():
+                    last_text = last
+    # Prefer the final assistant text; fall back to the last non-empty one.
+    out = last if last.strip() else last_text
 except Exception:
     out = ""
 out = " ".join(out.split())
