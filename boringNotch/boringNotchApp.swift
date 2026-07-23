@@ -38,7 +38,7 @@ struct DynamicNotchApp: App {
             .keyboardShortcut(KeyEquivalent(","), modifiers: .command)
             CheckForUpdatesView(updater: updaterController.updater)
             Divider()
-            Button("Restart Boring Notch") {
+            Button("Restart AgenticNotch") {
                 ApplicationRelauncher.restart()
             }
             Button("Quit", role: .destructive) {
