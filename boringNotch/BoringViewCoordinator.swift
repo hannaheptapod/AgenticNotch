@@ -36,13 +36,15 @@ struct AgentActivityInfo: Equatable {
         return AgentActivityInfo(tool: tool, status: status, project: q("project"), title: q("title"))
     }
 
-    var toolDisplayName: String {
+    static func displayName(for tool: String) -> String {
         switch tool.lowercased() {
         case "claude": return "Claude"
         case "codex":  return "Codex"
         default:       return tool.capitalized
         }
     }
+
+    var toolDisplayName: String { AgentActivityInfo.displayName(for: tool) }
 
     #if DEBUG
     static func runSelfCheck() {
@@ -368,6 +370,7 @@ class BoringViewCoordinator: ObservableObject {
 
     /// Show an agent-finished live activity in the notch (and optionally chime).
     func showAgentActivity(_ info: AgentActivityInfo) {
+        recordAgentHistory(info)
         guard Defaults[.agentNotifyEnabled] else { return }
         Task { @MainActor in
             withAnimation(.smooth) {
@@ -378,6 +381,14 @@ class BoringViewCoordinator: ObservableObject {
         if Defaults[.agentSoundEnabled] {
             NSSound(named: NSSound.Name(Defaults[.agentSoundName]))?.play()
         }
+    }
+
+    /// Prepend to the agent history, keeping only the last 10 entries.
+    private func recordAgentHistory(_ info: AgentActivityInfo) {
+        var history = Defaults[.agentHistory]
+        history.insert(AgentActivityRecord(info: info, date: Date()), at: 0)
+        if history.count > 10 { history = Array(history.prefix(10)) }
+        Defaults[.agentHistory] = history
     }
 }
 

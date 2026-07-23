@@ -355,6 +355,8 @@ struct ContentView: View {
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:
                         ShelfView()
+                    case .agents:
+                        AgentHistoryView()
                     }
                 }
                 .transition(
@@ -701,5 +703,52 @@ struct AgentActivityView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.trailing, 14)
         }
+    }
+}
+
+// MARK: - Agent history tab (AgenticNotch)
+
+struct AgentHistoryView: View {
+    @Default(.agentHistory) var history
+
+    var body: some View {
+        Group {
+            if history.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.title2)
+                        .foregroundStyle(.gray)
+                    Text("Sin actividad de agentes todavía")
+                        .font(.callout)
+                        .foregroundStyle(.gray)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(history) { rec in
+                            HStack(spacing: 10) {
+                                Image(systemName: rec.isOK ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                                    .foregroundStyle(rec.isOK ? .green : .red)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(rec.project.isEmpty ? rec.displayTool : "\(rec.displayTool) · \(rec.project)")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(.white)
+                                    Text(rec.date.formatted(.relative(presentation: .named)))
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.gray)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

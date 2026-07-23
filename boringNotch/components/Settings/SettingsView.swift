@@ -1810,6 +1810,7 @@ struct AgentsSettings: View {
     @Default(.agentSoundEnabled) var soundEnabled
     @Default(.agentSoundName) var soundName
     @Default(.agentAutoCollapseSeconds) var autoCollapse
+    @Default(.agentHistory) var history
 
     private let systemSounds = ["Glass", "Ping", "Pop", "Blow", "Bottle", "Frog",
                                 "Funk", "Hero", "Morse", "Purr", "Sosumi", "Submarine", "Tink"]
@@ -1835,6 +1836,28 @@ struct AgentsSettings: View {
             Section("Timing") {
                 Stepper("Auto-collapse after \(Int(autoCollapse))s",
                         value: $autoCollapse, in: 1...15)
+            }
+            Section("Recientes (últimos 10)") {
+                if history.isEmpty {
+                    Text("Sin actividad todavía.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(history) { rec in
+                        HStack(spacing: 8) {
+                            Image(systemName: rec.isOK ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                                .foregroundStyle(rec.isOK ? .green : .red)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(rec.project.isEmpty ? rec.displayTool : "\(rec.displayTool) · \(rec.project)")
+                                Text(rec.date.formatted(.relative(presentation: .named)))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Button("Limpiar historial", role: .destructive) {
+                        Defaults[.agentHistory] = []
+                    }
+                }
             }
         }
         .formStyle(.grouped)

@@ -68,12 +68,32 @@ enum OptionKeyAction: String, CaseIterable, Identifiable, Defaults.Serializable 
     var id: String { self.rawValue }
 }
 
+// One entry in the AgenticNotch agent-finished history (last 10 kept).
+struct AgentActivityRecord: Codable, Defaults.Serializable, Identifiable, Equatable {
+    var id: UUID = UUID()
+    var tool: String
+    var status: String     // AgentStatus rawValue: "ok" / "error"
+    var project: String
+    var date: Date
+
+    init(info: AgentActivityInfo, date: Date) {
+        self.tool = info.tool
+        self.status = info.status.rawValue
+        self.project = info.project
+        self.date = date
+    }
+
+    var isOK: Bool { status == AgentStatus.ok.rawValue }
+    var displayTool: String { AgentActivityInfo.displayName(for: tool) }
+}
+
 extension Defaults.Keys {
     // MARK: Agents (AgenticNotch)
     static let agentNotifyEnabled = Key<Bool>("agentNotifyEnabled", default: true)
     static let agentSoundEnabled = Key<Bool>("agentSoundEnabled", default: true)
     static let agentSoundName = Key<String>("agentSoundName", default: "Glass")
     static let agentAutoCollapseSeconds = Key<Double>("agentAutoCollapseSeconds", default: 4)
+    static let agentHistory = Key<[AgentActivityRecord]>("agentHistory", default: [])
 
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)
