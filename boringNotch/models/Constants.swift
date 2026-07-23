@@ -96,6 +96,7 @@ extension Defaults.Keys {
     static let agentSoundEnabled = Key<Bool>("agentSoundEnabled", default: true)
     static let agentSoundName = Key<String>("agentSoundName", default: "Glass")
     static let agentAutoCollapseSeconds = Key<Double>("agentAutoCollapseSeconds", default: 4)
+    static let agentDebounceSeconds = Key<Double>("agentDebounceSeconds", default: 4)
     static let agentHistory = Key<[AgentActivityRecord]>("agentHistory", default: [])
 
     // MARK: General

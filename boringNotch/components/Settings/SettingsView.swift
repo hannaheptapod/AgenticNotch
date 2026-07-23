@@ -1810,6 +1810,7 @@ struct AgentsSettings: View {
     @Default(.agentSoundEnabled) var soundEnabled
     @Default(.agentSoundName) var soundName
     @Default(.agentAutoCollapseSeconds) var autoCollapse
+    @Default(.agentDebounceSeconds) var debounce
     @Default(.agentHistory) var history
 
     private let systemSounds = ["Glass", "Ping", "Pop", "Blow", "Bottle", "Frog",
@@ -1833,9 +1834,16 @@ struct AgentsSettings: View {
                 Button("Preview") { NSSound(named: NSSound.Name(soundName))?.play() }
                     .disabled(!soundEnabled)
             }
-            Section("Timing") {
+            Section {
+                Stepper("Esperar \(Int(debounce))s antes de avisar",
+                        value: $debounce, in: 0...15)
                 Stepper("Auto-collapse after \(Int(autoCollapse))s",
                         value: $autoCollapse, in: 1...15)
+            } header: {
+                Text("Timing")
+            } footer: {
+                Text("La espera junta turnos seguidos: solo avisa cuando el agente estuvo quieto ese tiempo (evita una noti por turno).")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Recientes (últimos 10)") {
                 if history.isEmpty {

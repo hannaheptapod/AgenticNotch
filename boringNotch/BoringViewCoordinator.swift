@@ -369,15 +369,31 @@ class BoringViewCoordinator: ObservableObject {
         }
     }
 
-    /// Show an agent-finished live activity in the notch (and optionally chime).
+    private var agentDebounceTask: Task<Void, Never>?
+    private var pendingAgentInfo: AgentActivityInfo?
+
+    /// Called on every agent-finished event. Debounced: rapid successive events
+    /// (turn-by-turn in one task) reset the timer, so only the last one — once
+    /// things go quiet — actually notifies. Avoids a notification per turn.
     func showAgentActivity(_ info: AgentActivityInfo) {
+        pendingAgentInfo = info
+        agentDebounceTask?.cancel()
+        let seconds = max(0, Defaults[.agentDebounceSeconds])
+        agentDebounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard let self, !Task.isCancelled else { return }
+            await MainActor.run { self.fireAgentActivity() }
+        }
+    }
+
+    private func fireAgentActivity() {
+        guard let info = pendingAgentInfo else { return }
+        pendingAgentInfo = nil
         recordAgentHistory(info)
         guard Defaults[.agentNotifyEnabled] else { return }
-        Task { @MainActor in
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.74)) {
-                self.agentActivity.info = info
-                self.agentActivity.show = true
-            }
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.74)) {
+            self.agentActivity.info = info
+            self.agentActivity.show = true
         }
         if Defaults[.agentSoundEnabled] {
             NSSound(named: NSSound.Name(Defaults[.agentSoundName]))?.play()
