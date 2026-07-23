@@ -1,44 +1,22 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#26262c"/>
-      <stop offset="0.55" stop-color="#141418"/>
-      <stop offset="1" stop-color="#08080a"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1b1e"/>
+      <stop offset="1" stop-color="#0a0a0c"/>
     </linearGradient>
-    <linearGradient id="star" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5eead4"/>
-      <stop offset="0.5" stop-color="#34d399"/>
-      <stop offset="1" stop-color="#10b981"/>
-    </linearGradient>
-    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#34d399" stop-opacity="0.45"/>
-      <stop offset="1" stop-color="#34d399" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="14" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
   </defs>
 
   <!-- squircle body -->
   <rect x="64" y="64" width="896" height="896" rx="205" ry="205" fill="url(#bg)"/>
   <rect x="64" y="64" width="896" height="896" rx="205" ry="205" fill="none"
-        stroke="#ffffff" stroke-opacity="0.06" stroke-width="2"/>
+        stroke="#ffffff" stroke-opacity="0.08" stroke-width="2"/>
 
-  <!-- top highlight -->
-  <rect x="64" y="64" width="896" height="420" rx="205" ry="205" fill="#ffffff" fill-opacity="0.03"/>
+  <!-- hardware notch -->
+  <path d="M 372 64 L 652 64 L 652 122 Q 652 158 616 158 L 408 158 Q 372 158 372 122 Z" fill="#000000"/>
 
-  <!-- the notch -->
-  <path d="M 356 64 L 668 64 L 668 128 Q 668 168 628 168 L 396 168 Q 356 168 356 128 Z" fill="#000000"/>
-
-  <!-- halo behind sparkle -->
-  <circle cx="512" cy="560" r="300" fill="url(#halo)"/>
-
-  <!-- big sparkle -->
-  <path d="M 512 322 Q 512 560 750 560 Q 512 560 512 798 Q 512 560 274 560 Q 512 560 512 322 Z"
-        fill="url(#star)" filter="url(#glow)"/>
-
-  <!-- small sparkle -->
-  <path d="M 726 360 Q 726 430 796 430 Q 726 430 726 500 Q 726 430 656 430 Q 726 430 726 360 Z"
-        fill="url(#star)" filter="url(#glow)"/>
+  <!-- minimal mono sparkle -->
+  <path d="M 512 336 Q 512 512 688 512 Q 512 512 512 688 Q 512 512 336 512 Q 512 512 512 336 Z"
+        fill="#ffffff"/>
+  <path d="M 726 356 Q 726 420 790 420 Q 726 420 726 484 Q 726 420 662 420 Q 726 420 726 356 Z"
+        fill="#ffffff" fill-opacity="0.85"/>
 </svg>
