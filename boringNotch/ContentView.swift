@@ -343,7 +343,7 @@ struct ContentView: View {
                       }
                   }
               }
-              .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed))) { view in
+              .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed)) || (coordinator.agentActivity.show && vm.notchState == .closed)) { view in
                   view
                       .fixedSize()
               }
@@ -677,33 +677,64 @@ struct AgentActivityView: View {
     let notchGap: CGFloat
 
     private var accent: Color { info.status == .ok ? .green : .red }
-    private var icon: String { info.status == .ok ? "checkmark.circle.fill" : "xmark.octagon.fill" }
+    private var leftText: String {
+        info.title.isEmpty ? "\(info.toolDisplayName) terminó" : info.title
+    }
+    private var toolGlyph: String {
+        switch info.tool.lowercased() {
+        case "claude": return "sparkle"
+        case "codex":  return "chevron.left.forwardslash.chevron.right"
+        default:       return "cpu"
+        }
+    }
+
+    // Tool chip with a status dot in the corner.
+    private var toolChip: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(accent.opacity(0.16))
+                .frame(width: 22, height: 22)
+            Image(systemName: toolGlyph)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+            Circle()
+                .fill(accent)
+                .frame(width: 7, height: 7)
+                .overlay(Circle().stroke(.black, lineWidth: 1.5))
+                .offset(x: 2.5, y: 2.5)
+                .shadow(color: accent.opacity(0.7), radius: 2)
+        }
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            // Left of the notch: tool + status
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .foregroundStyle(accent)
-                    .font(.system(size: 13, weight: .bold))
-                Text("\(info.toolDisplayName) terminó")
+            // Left of the notch: tool chip + what it did (or "<tool> terminó")
+            HStack(spacing: 8) {
+                toolChip
+                Text(leftText)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 14)
+            .padding(.leading, 12)
 
             // Physical notch gap
             Rectangle().fill(.black).frame(width: notchGap)
 
-            // Right of the notch: project
-            Text(info.project.isEmpty ? " " : info.project)
-                .font(.system(size: 11))
-                .foregroundStyle(.gray)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 14)
+            // Right of the notch: project with a branch glyph
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(accent.opacity(0.9))
+                Text(info.project.isEmpty ? "—" : info.project)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.gray)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.trailing, 12)
         }
     }
 }
@@ -736,9 +767,15 @@ struct AgentHistoryView: View {
                                     Text(rec.project.isEmpty ? rec.displayTool : "\(rec.displayTool) · \(rec.project)")
                                         .font(.system(size: 13, weight: .medium))
                                         .foregroundStyle(.white)
+                                    if !rec.titleText.isEmpty {
+                                        Text(rec.titleText)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.gray)
+                                            .lineLimit(2)
+                                    }
                                     Text(rec.date.formatted(.relative(presentation: .named)))
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.gray)
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.gray.opacity(0.7))
                                 }
                                 Spacer(minLength: 0)
                             }

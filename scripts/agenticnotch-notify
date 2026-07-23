@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # agenticnotch-notify — poke AgenticNotch when an AI CLI agent finishes.
 # Usage: agenticnotch-notify --tool claude --status ok [--project NAME] [--title TEXT]
-# Unknown trailing args (e.g. Codex's JSON payload) are ignored.
+# If no --title is given and Stop-hook JSON arrives on stdin (Claude Code),
+# derives a short "what it did" title from the last assistant message.
+# Set AGENTICNOTCH_DEBUG=1 to print the URL instead of opening it.
 set -euo pipefail
+
+# Capture stdin (hook JSON) BEFORE anything else consumes it. Guarded so manual
+# terminal runs (stdin is a tty) don't block; short timeout for the rest.
+hook_json=""
+if [ ! -t 0 ]; then
+  IFS= read -r -d '' -t 1 hook_json <&0 || true
+fi
+
 tool=""; status="ok"; project="$(basename "$PWD")"; title=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -13,6 +23,49 @@ while [ $# -gt 0 ]; do
     *)         shift ;;
   esac
 done
+
+# Derive a short summary from the hook JSON's transcript (last assistant text).
+if [ -z "$title" ] && [ -n "$hook_json" ]; then
+  title="$(HOOK_JSON="$hook_json" python3 -c '
+import os, json
+raw = os.environ.get("HOOK_JSON", "")
+out = ""
+try:
+    hook = json.loads(raw)
+    tp = os.path.expanduser(hook.get("transcript_path", "") or "")
+    last = ""
+    if tp:
+        with open(tp) as f:
+            for line in f:
+                try:
+                    m = json.loads(line)
+                except Exception:
+                    continue
+                msg = m.get("message", m)
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                c = msg.get("content")
+                if isinstance(c, list):
+                    for b in c:
+                        if isinstance(b, dict) and b.get("type") == "text" and b.get("text"):
+                            last = b["text"]
+                elif isinstance(c, str) and c:
+                    last = c
+    out = last
+except Exception:
+    out = ""
+out = " ".join(out.split())
+if len(out) > 60:
+    out = out[:57].rstrip() + "…"
+print(out)
+' 2>/dev/null || true)"
+fi
+
 enc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "${1:-}"; }
 url="agenticnotch://done?tool=$(enc "$tool")&status=$(enc "$status")&project=$(enc "$project")&title=$(enc "$title")"
-open -g "$url"
+
+if [ "${AGENTICNOTCH_DEBUG:-}" = "1" ]; then
+  echo "$url"
+else
+  open -g "$url"
+fi

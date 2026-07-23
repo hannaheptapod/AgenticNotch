@@ -75,16 +75,19 @@ struct AgentActivityRecord: Codable, Defaults.Serializable, Identifiable, Equata
     var status: String     // AgentStatus rawValue: "ok" / "error"
     var project: String
     var date: Date
+    var title: String?     // optional: tolerates records saved before this field existed
 
     init(info: AgentActivityInfo, date: Date) {
         self.tool = info.tool
         self.status = info.status.rawValue
         self.project = info.project
         self.date = date
+        self.title = info.title.isEmpty ? nil : info.title
     }
 
     var isOK: Bool { status == AgentStatus.ok.rawValue }
     var displayTool: String { AgentActivityInfo.displayName(for: tool) }
+    var titleText: String { title ?? "" }
 }
 
 extension Defaults.Keys {

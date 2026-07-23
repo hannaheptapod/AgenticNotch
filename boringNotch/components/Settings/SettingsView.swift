@@ -1848,8 +1848,14 @@ struct AgentsSettings: View {
                                 .foregroundStyle(rec.isOK ? .green : .red)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(rec.project.isEmpty ? rec.displayTool : "\(rec.displayTool) · \(rec.project)")
+                                if !rec.titleText.isEmpty {
+                                    Text(rec.titleText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
                                 Text(rec.date.formatted(.relative(presentation: .named)))
-                                    .font(.caption)
+                                    .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
                         }
