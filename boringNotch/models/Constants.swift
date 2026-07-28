@@ -76,6 +76,7 @@ struct AgentActivityRecord: Codable, Defaults.Serializable, Identifiable, Equata
     var project: String
     var date: Date
     var title: String?     // optional: tolerates records saved before this field existed
+    var app: String?       // bundle id of the app the agent ran in; optional for old records
 
     init(info: AgentActivityInfo, date: Date) {
         self.tool = info.tool
@@ -83,6 +84,7 @@ struct AgentActivityRecord: Codable, Defaults.Serializable, Identifiable, Equata
         self.project = info.project
         self.date = date
         self.title = info.title.isEmpty ? nil : info.title
+        self.app = info.app.isEmpty ? nil : info.app
     }
 
     var isOK: Bool { status == AgentStatus.ok.rawValue }

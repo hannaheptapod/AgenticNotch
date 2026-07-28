@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # agenticnotch-notify — poke AgenticNotch when an AI CLI agent finishes.
-# Usage: agenticnotch-notify --tool claude --status ok [--project NAME] [--title TEXT]
+# Usage: agenticnotch-notify --tool claude --status ok [--project NAME] [--title TEXT] [--app BUNDLE_ID]
+# --app defaults to $__CFBundleIdentifier (the terminal/editor the agent runs in),
+# so clicking the notch card can jump back to that app.
 # If no --title is given and Stop-hook JSON arrives on stdin (Claude Code),
 # derives a short "what it did" title from the last assistant message.
 # Set AGENTICNOTCH_DEBUG=1 to print the URL instead of opening it.
@@ -13,13 +15,14 @@ if [ ! -t 0 ]; then
   IFS= read -r -d '' -t 1 hook_json <&0 || true
 fi
 
-tool=""; status="ok"; project="$(basename "$PWD")"; title=""
+tool=""; status="ok"; project="$(basename "$PWD")"; title=""; app="${__CFBundleIdentifier:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --tool)    tool="${2:-}"; shift 2 ;;
     --status)  status="${2:-}"; shift 2 ;;
     --project) project="${2:-}"; shift 2 ;;
     --title)   title="${2:-}"; shift 2 ;;
+    --app)     app="${2:-}"; shift 2 ;;
     *)         shift ;;
   esac
 done
@@ -68,7 +71,7 @@ print(out)
 fi
 
 enc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "${1:-}"; }
-url="agenticnotch://done?tool=$(enc "$tool")&status=$(enc "$status")&project=$(enc "$project")&title=$(enc "$title")"
+url="agenticnotch://done?tool=$(enc "$tool")&status=$(enc "$status")&project=$(enc "$project")&title=$(enc "$title")&app=$(enc "$app")"
 
 if [ "${AGENTICNOTCH_DEBUG:-}" = "1" ]; then
   echo "$url"

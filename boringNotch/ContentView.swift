@@ -263,6 +263,12 @@ struct ContentView: View {
                         AgentActivityView(info: coordinator.agentActivity.info,
                                           notchGap: vm.closedNotchSize.width + 10,
                                           notchHeight: vm.effectiveClosedNotchHeight)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                // Jump back to the app the agent ran in, then dismiss.
+                                coordinator.agentActivity.info.activateSourceApp()
+                                withAnimation(.smooth) { coordinator.agentActivity.show = false }
+                            }
                             .transition(.asymmetric(
                                 insertion: .scale(scale: 0.94, anchor: .top).combined(with: .opacity),
                                 removal: .opacity))
@@ -684,7 +690,7 @@ struct AgentActivityView: View {
     let notchHeight: CGFloat
 
     private var accent: Color { info.status == .ok ? .green : .red }
-    private var header: String { "\(info.toolDisplayName) terminó" }
+    private var header: String { "\(info.toolDisplayName) finished" }
     private var toolGlyph: String {
         switch info.tool.lowercased() {
         case "claude": return "sparkle"
@@ -770,7 +776,7 @@ struct AgentHistoryView: View {
                     Image(systemName: "sparkles")
                         .font(.title2)
                         .foregroundStyle(.gray)
-                    Text("Sin actividad de agentes todavía")
+                    Text("No agent activity yet")
                         .font(.callout)
                         .foregroundStyle(.gray)
                 }
@@ -819,7 +825,7 @@ struct AIQuotaView: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack {
-                Text("Límites IA")
+                Text("AI Limits")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
                 Spacer()
@@ -836,7 +842,7 @@ struct AIQuotaView: View {
             }
 
             if quota.providers.isEmpty {
-                Text(quota.isLoading ? "Cargando…" : "Sin datos")
+                Text(quota.isLoading ? "Loading…" : "No data")
                     .font(.callout)
                     .foregroundStyle(.gray)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
