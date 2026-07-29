@@ -18,11 +18,12 @@ fi
 # status is left empty so it can be derived from the transcript; an explicit
 # --status always wins.
 tool=""; status=""; project="$(basename "$PWD")"; title=""; app="${__CFBundleIdentifier:-}"
+project_explicit=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --tool)    tool="${2:-}"; shift 2 ;;
     --status)  status="${2:-}"; shift 2 ;;
-    --project) project="${2:-}"; shift 2 ;;
+    --project) project="${2:-}"; project_explicit=1; shift 2 ;;
     --title)   title="${2:-}"; shift 2 ;;
     --app)     app="${2:-}"; shift 2 ;;
     *)         shift ;;
@@ -53,9 +54,10 @@ def strip_markdown(s):
     return s
 
 raw = os.environ.get("HOOK_JSON", "")
-out, status = "", "ok"
+out, status, cwd = "", "ok", ""
 try:
     hook = json.loads(raw)
+    cwd = hook.get("cwd", "") or ""
     tp = os.path.expanduser(hook.get("transcript_path", "") or "")
     last = ""        # text of the most recent assistant message (may be empty if tool-only)
     last_text = ""   # last assistant message that actually had text (fallback)
@@ -68,6 +70,25 @@ try:
                     m = json.loads(line)
                 except Exception:
                     continue
+
+                # --- Codex rollout format: everything hangs off "payload" ---
+                pl = m.get("payload")
+                if isinstance(pl, dict):
+                    t = pl.get("type")
+                    if t == "agent_message" and isinstance(pl.get("message"), str):
+                        last = pl["message"]
+                        if last.strip():
+                            last_text = last
+                        continue
+                    if t == "task_complete" and isinstance(pl.get("last_agent_message"), str):
+                        # Authoritative end-of-turn text; prefer it over anything earlier.
+                        if pl["last_agent_message"].strip():
+                            last = last_text = pl["last_agent_message"]
+                        continue
+                    if t:
+                        continue
+
+                # --- Claude Code transcript format ---
                 # Claude Code flags API failures on the entry itself.
                 if m.get("isApiErrorMessage"):
                     saw_error = True
@@ -94,17 +115,21 @@ try:
     # Prefer the final assistant text; fall back to the last non-empty one.
     out = last if last.strip() else last_text
 except Exception:
-    out, status = "", "ok"
+    out, status, cwd = "", "ok", ""
 out = " ".join(strip_markdown(out).split())
 if len(out) > 60:
     out = out[:57].rstrip() + "…"
 print(status)
 print(out)
-' 2>/dev/null || printf 'ok\n\n')"
+print(os.path.basename(cwd.rstrip("/")) if cwd else "")
+' 2>/dev/null || printf 'ok\n\n\n')"
   derived_status="$(printf '%s' "$derived" | sed -n '1p')"
   derived_title="$(printf '%s' "$derived" | sed -n '2p')"
+  derived_project="$(printf '%s' "$derived" | sed -n '3p')"
   [ -z "$status" ] && status="${derived_status:-ok}"
   [ -z "$title" ] && title="$derived_title"
+  # The hook's cwd beats $PWD, which may be wherever the agent was launched.
+  [ -n "$derived_project" ] && [ "$project_explicit" != "1" ] && project="$derived_project"
 fi
 [ -z "$status" ] && status="ok"
 

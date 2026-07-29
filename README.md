@@ -142,7 +142,24 @@ to the terminal/editor the agent ran in, so tapping the card jumps back to it.
 ```toml
 notify = ["/path/to/AgenticNotch/scripts/agenticnotch-notify", "--tool", "codex"]
 ```
+
+If `notify` is already taken by another tool, use a Stop hook in
+`~/.codex/hooks.json` instead — Codex allows several, and it receives the
+same JSON on stdin, so the summary is extracted from the rollout too:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "timeout": 5,
+        "command": "/path/to/AgenticNotch/scripts/agenticnotch-notify --tool codex" } ] }
+    ]
+  }
+}
+```
 Codex appends a JSON event payload as a trailing argument; the script ignores it.
+Both Claude Code transcripts and Codex rollout files are understood when the
+hook supplies `transcript_path` on stdin.
 
 ## Usage
 
