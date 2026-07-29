@@ -574,7 +574,7 @@ struct AgentActivityState {
 
 /// Severity reported by the provider, when it reports one. Drives the bar
 /// colour so it matches the provider's own judgement instead of our guess.
-enum QuotaSeverity: String {
+enum QuotaSeverity: String, Codable {
     case normal, warning, critical
 
     var color: Color {
@@ -586,7 +586,7 @@ enum QuotaSeverity: String {
     }
 }
 
-struct QuotaWindow: Identifiable {
+struct QuotaWindow: Identifiable, Codable {
     let id = UUID()
     let label: String         // "5h", "7d", ...
     let usedPercent: Double    // 0...100
@@ -595,6 +595,9 @@ struct QuotaWindow: Identifiable {
     var severity: QuotaSeverity?
     /// Extra note shown next to the label, e.g. remaining credits.
     var note: String?
+
+    // `id` is display identity only — don't persist it.
+    enum CodingKeys: String, CodingKey { case label, usedPercent, resetAt, severity, note }
 }
 
 struct ProviderQuota: Identifiable {
@@ -624,7 +627,35 @@ final class AIQuotaManager: ObservableObject {
     /// often.
     private let minRefreshInterval: TimeInterval = 20
 
-    private init() {}
+    /// Last successful windows per provider, survives restarts. Without this a
+    /// relaunch during a rate-limit ban shows an empty card for the whole ban
+    /// even though we had perfectly good numbers minutes earlier.
+    private struct QuotaCache: Codable {
+        var windows: [String: [QuotaWindow]]
+        var updated: Date
+    }
+
+    private init() {
+        guard let data = Defaults[.aiQuotaCache],
+              let cache = try? JSONDecoder().decode(QuotaCache.self, from: data)
+        else { return }
+        providers = cache.windows
+            .sorted { $0.key < $1.key }   // "Claude" before "Codex", stable order
+            .map { ProviderQuota(provider: $0.key, windows: $0.value, error: nil, stale: true) }
+        lastUpdated = cache.updated
+    }
+
+    private func saveCache() {
+        var cache = QuotaCache(windows: [:], updated: lastUpdated ?? Date())
+        if let data = Defaults[.aiQuotaCache],
+           let existing = try? JSONDecoder().decode(QuotaCache.self, from: data) {
+            cache.windows = existing.windows
+        }
+        for p in providers where p.error == nil && !p.stale && !p.windows.isEmpty {
+            cache.windows[p.provider] = p.windows
+        }
+        Defaults[.aiQuotaCache] = try? JSONEncoder().encode(cache)
+    }
 
     /// `force` skips the throttle: use it for the poll timer and the manual
     /// refresh button, not for the on-appear fetch.
@@ -638,6 +669,7 @@ final class AIQuotaManager: ObservableObject {
         providers = [claude, codex].compactMap { $0 }.map(keepingLastGoodWindows)
         lastUpdated = Date()
         isLoading = false
+        saveCache()
     }
 
     /// A rate limit or a dropped connection shouldn't blank out numbers we
@@ -659,6 +691,15 @@ final class AIQuotaManager: ObservableObject {
     private func backoffRemaining(_ provider: String) -> Int? {
         guard let until = backoffUntil[provider], until > Date() else { return nil }
         return max(1, Int(until.timeIntervalSinceNow.rounded(.up)))
+    }
+
+    /// "45s", "12m", "1h 5m" — a ban can run to an hour, and "3596s" reads as
+    /// noise rather than a duration.
+    static func backoffText(_ seconds: Int) -> String {
+        if seconds < 90 { return "\(seconds)s" }
+        let m = (seconds + 59) / 60
+        if m < 60 { return "\(m)m" }
+        return m % 60 == 0 ? "\(m / 60)h" : "\(m / 60)h \(m % 60)m"
     }
 
     /// Honour Retry-After when the server sends one; two minutes is a guess
@@ -692,7 +733,7 @@ final class AIQuotaManager: ObservableObject {
 
     private func fetchClaude() async -> ProviderQuota? {
         if let secs = backoffRemaining("Claude") {
-            return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(secs)s")
+            return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
         }
         guard let token = claudeToken() else {
             return ProviderQuota(provider: "Claude", windows: [], error: "No credentials found")
@@ -707,7 +748,7 @@ final class AIQuotaManager: ObservableObject {
             if code == 401 { return ProviderQuota(provider: "Claude", windows: [], error: "Session expired — log in again") }
             if code == 429 {
                 let secs = startBackoff("Claude", response: resp)
-                return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(secs)s")
+                return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
             }
             guard code == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -802,7 +843,7 @@ final class AIQuotaManager: ObservableObject {
 
     private func fetchCodex() async -> ProviderQuota? {
         if let secs = backoffRemaining("Codex") {
-            return ProviderQuota(provider: "Codex", windows: [], error: "Rate limited — retrying in \(secs)s")
+            return ProviderQuota(provider: "Codex", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
         }
         let path = ("~/.codex/auth.json" as NSString).expandingTildeInPath
         guard let data = FileManager.default.contents(atPath: path),
@@ -826,7 +867,7 @@ final class AIQuotaManager: ObservableObject {
             if code == 401 { return ProviderQuota(provider: "Codex", windows: [], error: "Session expired — run 'codex' to renew") }
             if code == 429 {
                 let secs = startBackoff("Codex", response: resp)
-                return ProviderQuota(provider: "Codex", windows: [], error: "Rate limited — retrying in \(secs)s")
+                return ProviderQuota(provider: "Codex", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
             }
             guard code == 200,
                   let j = try JSONSerialization.jsonObject(with: respData) as? [String: Any],

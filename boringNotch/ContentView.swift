@@ -1043,6 +1043,9 @@ struct AIQuotaView: View {
                                 if let e = p.error {
                                     Text(p.stale ? "\(e) — showing last known" : e)
                                         .font(.system(size: 12)).foregroundStyle(.orange)
+                                } else if p.stale {
+                                    Text("last known values")
+                                        .font(.system(size: 11)).foregroundStyle(.gray)
                                 }
                                 if p.windows.isEmpty {
                                     if p.error == nil {
