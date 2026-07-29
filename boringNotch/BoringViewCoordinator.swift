@@ -40,13 +40,16 @@ struct AgentActivityInfo: Equatable {
     }
 
     /// Bring the app the agent ran in (terminal, editor) to the front.
+    /// Uses `openApplication` even when the app is already running: activating
+    /// another app from a background (LSUIElement) process is unreliable via
+    /// `NSRunningApplication.activate`, whereas openApplication both launches
+    /// and raises.
     func activateSourceApp() {
-        guard !app.isEmpty else { return }
-        if let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == app }) {
-            running.activate(options: [.activateAllWindows])
-        } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app) {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
-        }
+        guard !app.isEmpty,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app) else { return }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config)
     }
 
     static func displayName(for tool: String) -> String {

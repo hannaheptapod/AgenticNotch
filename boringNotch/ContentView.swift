@@ -263,12 +263,6 @@ struct ContentView: View {
                         AgentActivityView(info: coordinator.agentActivity.info,
                                           notchGap: vm.closedNotchSize.width + 10,
                                           notchHeight: vm.effectiveClosedNotchHeight)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                // Jump back to the app the agent ran in, then dismiss.
-                                coordinator.agentActivity.info.activateSourceApp()
-                                withAnimation(.smooth) { coordinator.agentActivity.show = false }
-                            }
                             .transition(.asymmetric(
                                 insertion: .scale(scale: 0.94, anchor: .top).combined(with: .opacity),
                                 removal: .opacity))
@@ -522,6 +516,15 @@ struct ContentView: View {
     }
 
     private func doOpen() {
+        // While the agent-finished card is up, a tap jumps back to the app the
+        // agent ran in instead of opening the notch. Handled here (rather than
+        // with a gesture on the card) because the closed notch routes all taps
+        // through this one handler.
+        if coordinator.agentActivity.show {
+            coordinator.agentActivity.info.activateSourceApp()
+            withAnimation(.smooth) { coordinator.agentActivity.show = false }
+            return
+        }
         withAnimation(animationSpring) {
             vm.open()
         }
@@ -889,7 +892,7 @@ struct QuotaBar: View {
             HStack {
                 Text(window.label).font(.system(size: 10)).foregroundStyle(.gray)
                 Spacer()
-                Text("\(Int(pct))% usado").font(.system(size: 10, weight: .medium)).foregroundStyle(.white)
+                Text("\(Int(pct))% used").font(.system(size: 10, weight: .medium)).foregroundStyle(.white)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -899,10 +902,33 @@ struct QuotaBar: View {
             }
             .frame(height: 5)
             if let reset = window.resetAt {
-                Text("reset \(reset.formatted(.relative(presentation: .named)))")
-                    .font(.system(size: 8))
-                    .foregroundStyle(.gray.opacity(0.7))
+                // Live countdown, refreshed every second.
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(QuotaBar.resetText(reset, now: context.date))
+                        .font(.system(size: 8))
+                        .foregroundStyle(.gray.opacity(0.7))
+                        .monospacedDigit()
+                }
             }
         }
+    }
+
+    /// "resets in 2h 14m 03s · 18:30" — or "resetting…" once the window lapses.
+    static func resetText(_ reset: Date, now: Date) -> String {
+        let remaining = Int(reset.timeIntervalSince(now).rounded(.down))
+        guard remaining > 0 else { return "resetting…" }
+        let d = remaining / 86400
+        let h = (remaining % 86400) / 3600
+        let m = (remaining % 3600) / 60
+        let s = remaining % 60
+        let left: String
+        if d > 0 {
+            left = String(format: "%dd %dh %02dm", d, h, m)
+        } else if h > 0 {
+            left = String(format: "%dh %02dm %02ds", h, m, s)
+        } else {
+            left = String(format: "%dm %02ds", m, s)
+        }
+        return "resets in \(left) · \(reset.formatted(date: .omitted, time: .shortened))"
     }
 }

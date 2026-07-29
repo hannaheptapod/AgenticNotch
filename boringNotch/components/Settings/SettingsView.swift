@@ -1868,7 +1868,7 @@ struct AgentsSettings: View {
                             }
                         }
                     }
-                    Button("Limpiar historial", role: .destructive) {
+                    Button("Clear history", role: .destructive) {
                         Defaults[.agentHistory] = []
                     }
                 }
