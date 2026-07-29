@@ -63,6 +63,47 @@ enum AgentAppLauncher {
     }
 }
 
+/// A turn that is currently running, shown as a live activity until the
+/// matching `done` arrives (or it ages out).
+struct AgentLiveRun: Identifiable, Equatable {
+    let id: String            // session id from the agent; unique per run
+    var tool: String
+    var project: String
+    var app: String
+    var startedAt: Date
+    var detail: String        // optional: current tool/step
+
+    var toolDisplayName: String { AgentActivityInfo.displayName(for: tool) }
+
+    /// Bring the tool's desktop app (or the app the run happens in) forward.
+    func activateSourceApp() { AgentAppLauncher.activate(tool: tool, sourceApp: app) }
+}
+
+/// The three things an `agenticnotch://` URL can express.
+enum AgentURLEvent {
+    case start(AgentLiveRun)
+    case done(AgentActivityInfo)
+
+    static func from(url: URL) -> AgentURLEvent? {
+        guard url.scheme == "agenticnotch" else { return nil }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func q(_ name: String) -> String { items.first(where: { $0.name == name })?.value ?? "" }
+        switch url.host {
+        case "start":
+            let tool = q("tool")
+            guard !tool.isEmpty else { return nil }
+            // Without a session id a run can never be cleared by its `done`.
+            let session = q("session").isEmpty ? "\(tool)/\(q("project"))" : q("session")
+            return .start(AgentLiveRun(id: session, tool: tool, project: q("project"),
+                                       app: q("app"), startedAt: Date(), detail: q("detail")))
+        case "done":
+            return AgentActivityInfo.from(url: url).map { .done($0) }
+        default:
+            return nil
+        }
+    }
+}
+
 /// Payload decoded from an `agenticnotch://done?...` URL fired when a CLI AI
 /// agent (Claude Code, Codex, ...) finishes a turn.
 struct AgentActivityInfo: Equatable {
@@ -71,6 +112,7 @@ struct AgentActivityInfo: Equatable {
     var project: String       // basename of the agent's cwd; may be ""
     var title: String         // optional extra line; may be ""
     var app: String = ""      // bundle id of the app the agent ran in (terminal, editor); may be ""
+    var session: String = ""  // session id, used to clear the matching live run
 
     /// Parse an `agenticnotch://done?...` URL. Returns nil for anything else.
     static func from(url: URL) -> AgentActivityInfo? {
@@ -81,7 +123,7 @@ struct AgentActivityInfo: Equatable {
         guard !tool.isEmpty else { return nil }
         let status = AgentStatus(rawValue: q("status")) ?? .ok
         return AgentActivityInfo(tool: tool, status: status, project: q("project"), title: q("title"),
-                                 app: q("app"))
+                                 app: q("app"), session: q("session"))
     }
 
     /// Bring the relevant app to the front when the card is tapped.
@@ -421,6 +463,64 @@ class BoringViewCoordinator: ObservableObject {
         }
     }
 
+    // MARK: Live runs
+
+    /// Turns currently in flight, newest first. Drives the live activity.
+    @Published var liveRuns: [AgentLiveRun] = []
+
+    private var liveSweepTask: Task<Void, Never>?
+
+    /// Record a turn as started. A repeat start for the same session just
+    /// refreshes it, so a re-prompt in one session doesn't stack up entries.
+    func startAgentRun(_ run: AgentLiveRun) {
+        guard Defaults[.agentLiveActivityEnabled] else { return }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            if let i = liveRuns.firstIndex(where: { $0.id == run.id }) {
+                // Keep the original start time so the elapsed timer is honest.
+                var updated = run
+                updated.startedAt = liveRuns[i].startedAt
+                liveRuns[i] = updated
+            } else {
+                liveRuns.insert(run, at: 0)
+            }
+        }
+        scheduleLiveSweep()
+    }
+
+    /// Clear a live run once its turn ends. Falls back to matching on
+    /// tool+project when the agent gave us no session id.
+    func finishAgentRun(_ info: AgentActivityInfo) {
+        withAnimation(.smooth) {
+            if !info.session.isEmpty {
+                liveRuns.removeAll { $0.id == info.session }
+            } else {
+                liveRuns.removeAll { $0.tool == info.tool && $0.project == info.project }
+            }
+        }
+    }
+
+    /// Drop runs whose `done` never arrived (crash, killed terminal, hook not
+    /// wired). Without this the notch would show a run forever.
+    private func scheduleLiveSweep() {
+        liveSweepTask?.cancel()
+        liveSweepTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard let self, !Task.isCancelled else { return }
+                let maxAge = max(60, Defaults[.agentLiveMaxMinutes] * 60)
+                await MainActor.run {
+                    let cutoff = Date().addingTimeInterval(-maxAge)
+                    if self.liveRuns.contains(where: { $0.startedAt < cutoff }) {
+                        withAnimation(.smooth) {
+                            self.liveRuns.removeAll { $0.startedAt < cutoff }
+                        }
+                    }
+                    if self.liveRuns.isEmpty { self.liveSweepTask?.cancel() }
+                }
+            }
+        }
+    }
+
     private var agentDebounceTask: Task<Void, Never>?
     private var pendingAgentInfo: AgentActivityInfo?
 
@@ -428,6 +528,9 @@ class BoringViewCoordinator: ObservableObject {
     /// (turn-by-turn in one task) reset the timer, so only the last one — once
     /// things go quiet — actually notifies. Avoids a notification per turn.
     func showAgentActivity(_ info: AgentActivityInfo) {
+        // Clear the live run immediately — the notification itself is debounced,
+        // but "still running" must stop being true the moment the turn ends.
+        finishAgentRun(info)
         pendingAgentInfo = info
         agentDebounceTask?.cancel()
         let seconds = max(0, Defaults[.agentDebounceSeconds])

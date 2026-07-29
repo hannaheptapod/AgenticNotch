@@ -18,7 +18,7 @@ fi
 # status is left empty so it can be derived from the transcript; an explicit
 # --status always wins.
 tool=""; status=""; project="$(basename "$PWD")"; title=""; app="${__CFBundleIdentifier:-}"
-project_explicit=0
+project_explicit=0; event="done"; session=""; detail=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --tool)    tool="${2:-}"; shift 2 ;;
@@ -26,6 +26,9 @@ while [ $# -gt 0 ]; do
     --project) project="${2:-}"; project_explicit=1; shift 2 ;;
     --title)   title="${2:-}"; shift 2 ;;
     --app)     app="${2:-}"; shift 2 ;;
+    --event)   event="${2:-done}"; shift 2 ;;
+    --session) session="${2:-}"; shift 2 ;;
+    --detail)  detail="${2:-}"; shift 2 ;;
     # Codex's `notify` appends its event payload as a trailing JSON argument
     # rather than on stdin. Treat that as the hook payload too.
     '{'*)      [ -z "$hook_json" ] && hook_json="$1"; shift ;;
@@ -35,8 +38,8 @@ done
 
 # Derive the summary and the ok/error status from the hook JSON's transcript.
 # Emits two lines: status, then title.
-if [ -n "$hook_json" ] && { [ -z "$title" ] || [ -z "$status" ]; }; then
-  derived="$(HOOK_JSON="$hook_json" python3 -c '
+if [ -n "$hook_json" ] && { [ -z "$title" ] || [ -z "$status" ] || [ -z "$session" ]; }; then
+  derived="$(HOOK_JSON="$hook_json" AN_EVENT="$event" python3 -c '
 import os, json, re
 
 def strip_markdown(s):
@@ -57,10 +60,15 @@ def strip_markdown(s):
     return s
 
 raw = os.environ.get("HOOK_JSON", "")
-out, status, cwd = "", "ok", ""
+event = os.environ.get("AN_EVENT", "done")
+out, status, cwd, session = "", "ok", "", ""
 try:
     hook = json.loads(raw)
     cwd = hook.get("cwd", "") or ""
+    session = str(hook.get("session_id") or hook.get("thread-id") or hook.get("turn-id") or "")
+    # A start event only needs cwd/session — never walk the transcript for it.
+    if event == "start":
+        raise StopIteration
     # The Codex notify payload carries the text directly and has no transcript.
     direct = hook.get("last-assistant-message") or hook.get("last_agent_message")
     if isinstance(direct, str) and direct.strip():
@@ -125,26 +133,33 @@ try:
 except StopIteration:
     pass                               # `out` already holds the direct message
 except Exception:
-    out, status, cwd = "", "ok", ""
+    out, status = "", "ok"
 out = " ".join(strip_markdown(out).split())
 if len(out) > 60:
     out = out[:57].rstrip() + "…"
 print(status)
 print(out)
 print(os.path.basename(cwd.rstrip("/")) if cwd else "")
-' 2>/dev/null || printf 'ok\n\n\n')"
+print(session)
+' 2>/dev/null || printf 'ok\n\n\n\n')"
   derived_status="$(printf '%s' "$derived" | sed -n '1p')"
   derived_title="$(printf '%s' "$derived" | sed -n '2p')"
   derived_project="$(printf '%s' "$derived" | sed -n '3p')"
+  derived_session="$(printf '%s' "$derived" | sed -n '4p')"
   [ -z "$status" ] && status="${derived_status:-ok}"
   [ -z "$title" ] && title="$derived_title"
+  [ -z "$session" ] && session="$derived_session"
   # The hook's cwd beats $PWD, which may be wherever the agent was launched.
   [ -n "$derived_project" ] && [ "$project_explicit" != "1" ] && project="$derived_project"
 fi
 [ -z "$status" ] && status="ok"
 
 enc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "${1:-}"; }
-url="agenticnotch://done?tool=$(enc "$tool")&status=$(enc "$status")&project=$(enc "$project")&title=$(enc "$title")&app=$(enc "$app")"
+if [ "$event" = "start" ]; then
+  url="agenticnotch://start?tool=$(enc "$tool")&project=$(enc "$project")&session=$(enc "$session")&app=$(enc "$app")&detail=$(enc "$detail")"
+else
+  url="agenticnotch://done?tool=$(enc "$tool")&status=$(enc "$status")&project=$(enc "$project")&title=$(enc "$title")&app=$(enc "$app")&session=$(enc "$session")"
+fi
 
 if [ "${AGENTICNOTCH_DEBUG:-}" = "1" ]; then
   echo "$url"

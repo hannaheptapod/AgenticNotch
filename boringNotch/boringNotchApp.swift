@@ -72,15 +72,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    // AgenticNotch: route agenticnotch://done URLs to the notch live activity.
+    // AgenticNotch: route agenticnotch://start and ://done to the notch.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
-            guard let info = AgentActivityInfo.from(url: url) else {
+            guard let event = AgentURLEvent.from(url: url) else {
                 NSLog("AgenticNotch: ignored URL \(url.absoluteString)")
                 continue
             }
             Task { @MainActor in
-                BoringViewCoordinator.shared.showAgentActivity(info)
+                switch event {
+                case .start(let run): BoringViewCoordinator.shared.startAgentRun(run)
+                case .done(let info): BoringViewCoordinator.shared.showAgentActivity(info)
+                }
             }
         }
     }

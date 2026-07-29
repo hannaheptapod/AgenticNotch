@@ -63,6 +63,8 @@ struct ContentView: View {
 
         if coordinator.agentActivity.show && vm.notchState == .closed {
             chinWidth = 420
+        } else if !coordinator.liveRuns.isEmpty && vm.notchState == .closed {
+            chinWidth = 380
         } else if coordinator.expandingView.type == .battery && coordinator.expandingView.show
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
@@ -266,6 +268,13 @@ struct ContentView: View {
                             .transition(.asymmetric(
                                 insertion: .scale(scale: 0.94, anchor: .top).combined(with: .opacity),
                                 removal: .opacity))
+                    } else if !coordinator.liveRuns.isEmpty && vm.notchState == .closed {
+                        AgentLiveActivityView(runs: coordinator.liveRuns,
+                                              notchGap: vm.closedNotchSize.width + 10,
+                                              notchHeight: vm.effectiveClosedNotchHeight)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.96, anchor: .top).combined(with: .opacity),
+                                removal: .opacity))
                     } else if coordinator.expandingView.type == .battery && coordinator.expandingView.show
                         && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
                     {
@@ -346,7 +355,7 @@ struct ContentView: View {
                       }
                   }
               }
-              .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed)) || (coordinator.agentActivity.show && vm.notchState == .closed)) { view in
+              .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed)) || (coordinator.agentActivity.show && vm.notchState == .closed) || (!coordinator.liveRuns.isEmpty && vm.notchState == .closed)) { view in
                   view
                       .fixedSize()
               }
@@ -767,14 +776,112 @@ struct AgentActivityView: View {
     }
 }
 
+/// Persistent live activity for turns that are still running. Unlike the
+/// finished card this does not auto-collapse — it stays until the turn ends.
+struct AgentLiveActivityView: View {
+    let runs: [AgentLiveRun]
+    let notchGap: CGFloat
+    let notchHeight: CGFloat
+
+    private var primary: AgentLiveRun? { runs.first }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 8) {
+                PulsingDot()
+                Text(primary.map { "\($0.toolDisplayName) working" } ?? "")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                if runs.count > 1 {
+                    Text("+\(runs.count - 1)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.gray)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.white.opacity(0.12), in: Capsule())
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 12)
+
+            Rectangle().fill(.black).frame(width: notchGap)
+
+            HStack(spacing: 6) {
+                if let p = primary, !p.detail.isEmpty {
+                    Text(p.detail)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.gray)
+                        .lineLimit(1)
+                } else if let p = primary, !p.project.isEmpty {
+                    Text(p.project)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.gray)
+                        .lineLimit(1)
+                }
+                if let started = primary?.startedAt {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(AgentLiveActivityView.elapsed(from: started, to: context.date))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .monospacedDigit()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.trailing, 12)
+        }
+        .frame(height: max(notchHeight, 24))
+    }
+
+    /// "12s", "4:07", "1:02:30"
+    static func elapsed(from start: Date, to now: Date) -> String {
+        let t = max(0, Int(now.timeIntervalSince(start)))
+        if t < 60 { return "\(t)s" }
+        let h = t / 3600, m = (t % 3600) / 60, s = t % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s)
+                     : String(format: "%d:%02d", m, s)
+    }
+}
+
+/// Breathing dot that reads as "in progress" without a spinner's busy feel.
+struct PulsingDot: View {
+    @State private var on = false
+    var body: some View {
+        Circle()
+            .fill(Color.green)
+            .frame(width: 8, height: 8)
+            .shadow(color: .green.opacity(0.8), radius: on ? 4 : 1)
+            .opacity(on ? 1 : 0.45)
+            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: on)
+            .onAppear { on = true }
+    }
+}
+
 // MARK: - Agent history tab (AgenticNotch)
 
 struct AgentHistoryView: View {
     @Default(.agentHistory) var history
+    @ObservedObject var coordinator = BoringViewCoordinator.shared
 
     var body: some View {
+        VStack(spacing: 6) {
+            if !coordinator.liveRuns.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(coordinator.liveRuns) { run in
+                        AgentLiveRow(run: run)
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+            historyList
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var historyList: some View {
         Group {
-            if history.isEmpty {
+            if history.isEmpty && coordinator.liveRuns.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.title2)
@@ -796,6 +903,43 @@ struct AgentHistoryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// An in-flight run at the top of the history tab, with a live elapsed timer.
+struct AgentLiveRow: View {
+    let run: AgentLiveRun
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            PulsingDot()
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(run.project.isEmpty ? run.toolDisplayName
+                                         : "\(run.toolDisplayName) · \(run.project)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+                Text(run.detail.isEmpty ? "running…" : run.detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.gray)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(AgentLiveActivityView.elapsed(from: run.startedAt, to: context.date))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .monospacedDigit()
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.green.opacity(isHovering ? 0.18 : 0.10),
+                    in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onHover { isHovering = $0 }
+        .onTapGesture { run.activateSourceApp() }
     }
 }
 

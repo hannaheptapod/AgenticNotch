@@ -106,6 +106,10 @@ extension Defaults.Keys {
     static let agentDebounceSeconds = Key<Double>("agentDebounceSeconds", default: 4)
     static let agentHistory = Key<[AgentActivityRecord]>("agentHistory", default: [])
     static let agentHistoryLimit = Key<Int>("agentHistoryLimit", default: 10)
+    /// Show in-flight turns as a live activity in the closed notch.
+    static let agentLiveActivityEnabled = Key<Bool>("agentLiveActivityEnabled", default: true)
+    /// Give up on a run whose `done` never arrived after this many minutes.
+    static let agentLiveMaxMinutes = Key<Double>("agentLiveMaxMinutes", default: 30)
     /// How often the AI limits tab re-fetches usage while it is on screen.
     static let quotaRefreshSeconds = Key<Double>("quotaRefreshSeconds", default: 60)
 
