@@ -503,6 +503,24 @@ final class AIQuotaManager: ObservableObject {
         isLoading = false
     }
 
+    // MARK: Reset timestamps
+
+    /// Reset timestamps arrive in two shapes: Anthropic sends an ISO 8601
+    /// string ("2026-07-29T02:40:00.940475+00:00"), OpenAI sends Unix epoch
+    /// seconds. Accept both — casting a string with `as? Double` silently
+    /// yields nil, which is why Claude showed no reset time at all.
+    static func parseResetDate(_ value: Any?) -> Date? {
+        if let epoch = value as? Double { return Date(timeIntervalSince1970: epoch) }
+        if let epoch = (value as? NSNumber)?.doubleValue { return Date(timeIntervalSince1970: epoch) }
+        guard let text = value as? String, !text.isEmpty else { return nil }
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: text) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: text)
+    }
+
     // MARK: Claude
 
     private func fetchClaude() async -> ProviderQuota? {
@@ -535,10 +553,10 @@ final class AIQuotaManager: ObservableObject {
             guard let dict = value as? [String: Any] else { continue }
             guard let util = (dict["utilization"] as? Double) ?? (dict["utilization"] as? NSNumber)?.doubleValue
             else { continue }
-            let reset = (dict["resets_at"] as? Double) ?? (dict["reset_at"] as? Double)
+            let reset = AIQuotaManager.parseResetDate(dict["resets_at"] ?? dict["reset_at"])
             out.append(QuotaWindow(label: labels[key] ?? key.replacingOccurrences(of: "_", with: " "),
                                    usedPercent: util,
-                                   resetAt: reset.map { Date(timeIntervalSince1970: $0) }))
+                                   resetAt: reset))
         }
         let order = ["5h", "7d", "7d Sonnet", "7d Opus"]
         return out.sorted { (order.firstIndex(of: $0.label) ?? 99) < (order.firstIndex(of: $1.label) ?? 99) }
@@ -593,11 +611,18 @@ final class AIQuotaManager: ObservableObject {
                 guard let w = rate[key] as? [String: Any],
                       let used = (w["used_percent"] as? Double) ?? (w["used_percent"] as? NSNumber)?.doubleValue
                 else { continue }
-                let reset = (w["reset_at"] as? Double) ?? (w["reset_at"] as? NSNumber)?.doubleValue
+                // Prefer the absolute reset_at; fall back to reset_after_seconds
+                // (a duration from now) when the API omits it.
+                var reset = AIQuotaManager.parseResetDate(w["reset_at"])
+                if reset == nil,
+                   let after = (w["reset_after_seconds"] as? Double)
+                       ?? (w["reset_after_seconds"] as? NSNumber)?.doubleValue {
+                    reset = Date().addingTimeInterval(after)
+                }
                 let secs = (w["limit_window_seconds"] as? Double) ?? (w["limit_window_seconds"] as? NSNumber)?.doubleValue
                 windows.append(QuotaWindow(label: codexLabel(secs) ?? fallback,
                                            usedPercent: used,
-                                           resetAt: reset.map { Date(timeIntervalSince1970: $0) }))
+                                           resetAt: reset))
             }
             return ProviderQuota(provider: "Codex", windows: windows, error: nil)
         } catch {

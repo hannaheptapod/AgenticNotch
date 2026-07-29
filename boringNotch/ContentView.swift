@@ -932,7 +932,9 @@ struct QuotaBar: View {
         }
     }
 
-    /// "resets in 2h 14m 03s · 18:30" — or "resetting…" once the window lapses.
+    /// "resets in 2h 14m 03s · 11:40" for a reset later today, or
+    /// "resets in 6d 23h 59m · Aug 5, 9:17" when it falls on another day.
+    /// Shows "resetting…" once the window has lapsed.
     static func resetText(_ reset: Date, now: Date) -> String {
         let remaining = Int(reset.timeIntervalSince(now).rounded(.down))
         guard remaining > 0 else { return "resetting…" }
@@ -948,6 +950,10 @@ struct QuotaBar: View {
         } else {
             left = String(format: "%dm %02ds", m, s)
         }
-        return "resets in \(left) · \(reset.formatted(date: .omitted, time: .shortened))"
+        // A bare clock time is ambiguous for resets days away — include the date.
+        let when = Calendar.current.isDate(reset, inSameDayAs: now)
+            ? reset.formatted(date: .omitted, time: .shortened)
+            : reset.formatted(date: .abbreviated, time: .shortened)
+        return "resets in \(left) · \(when)"
     }
 }
