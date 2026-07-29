@@ -788,28 +788,7 @@ struct AgentHistoryView: View {
                 ScrollView {
                     VStack(spacing: 6) {
                         ForEach(history) { rec in
-                            HStack(spacing: 10) {
-                                Image(systemName: rec.isOK ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                                    .foregroundStyle(rec.isOK ? .green : .red)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(rec.project.isEmpty ? rec.displayTool : "\(rec.displayTool) · \(rec.project)")
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundStyle(.white)
-                                    if !rec.titleText.isEmpty {
-                                        Text(rec.titleText)
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.gray)
-                                            .lineLimit(2)
-                                    }
-                                    Text(rec.date.formatted(.relative(presentation: .named)))
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(.gray.opacity(0.7))
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                            AgentHistoryRow(rec: rec)
                         }
                     }
                     .padding(.horizontal, 4)
@@ -817,6 +796,46 @@ struct AgentHistoryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// One run in the history tab. Tapping it jumps to the tool's app, same as
+/// tapping the live notification card.
+struct AgentHistoryRow: View {
+    let rec: AgentActivityRecord
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: rec.isOK ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                .foregroundStyle(rec.isOK ? .green : .red)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(rec.project.isEmpty ? rec.displayTool : "\(rec.displayTool) · \(rec.project)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+                if !rec.titleText.isEmpty {
+                    Text(rec.titleText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.gray)
+                        .lineLimit(2)
+                }
+                Text(rec.date.formatted(.relative(presentation: .named)))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.gray.opacity(0.7))
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "arrow.up.forward.app")
+                .font(.system(size: 10))
+                .foregroundStyle(.gray)
+                .opacity(isHovering ? 1 : 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color.white.opacity(isHovering ? 0.12 : 0.05),
+                    in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onHover { isHovering = $0 }
+        .onTapGesture { rec.activateSourceApp() }
     }
 }
 

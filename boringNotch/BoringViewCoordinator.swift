@@ -18,6 +18,51 @@ enum AgentStatus: String {
     case error
 }
 
+/// Brings the app behind an agent run to the front. Shared by the live
+/// notification card and the run-history rows.
+enum AgentAppLauncher {
+    /// Desktop app that owns this tool, if any.
+    static func desktopAppBundleID(for tool: String) -> String? {
+        switch tool.lowercased() {
+        case "claude": return "com.anthropic.claudefordesktop"
+        case "codex":  return "com.openai.codex"          // ChatGPT.app
+        default:       return nil
+        }
+    }
+
+    /// Prefers the tool's desktop app (Claude / ChatGPT); falls back to the
+    /// app the agent ran in (terminal, editor) when there is no desktop app
+    /// for the tool or it isn't installed.
+    ///
+    /// Only ever *activates* an already-running app — never re-opens one.
+    /// Re-opening a running app makes some terminals (iTerm2) spawn a fresh
+    /// empty window. A desktop app that is installed but not running is
+    /// launched, since that has no such side effect.
+    static func activate(tool: String, sourceApp: String) {
+        if let desktop = desktopAppBundleID(for: tool) {
+            if activateRunning(desktop) { return }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: desktop) {
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = true
+                NSWorkspace.shared.openApplication(at: url, configuration: config)
+                return
+            }
+        }
+        activateRunning(sourceApp)
+    }
+
+    /// Activate a running app by bundle id. Returns false if it isn't running.
+    @discardableResult
+    static func activateRunning(_ bundleID: String) -> Bool {
+        guard !bundleID.isEmpty,
+              let running = NSWorkspace.shared.runningApplications
+                  .first(where: { $0.bundleIdentifier == bundleID })
+        else { return false }
+        running.activate(options: [.activateAllWindows])
+        return true
+    }
+}
+
 /// Payload decoded from an `agenticnotch://done?...` URL fired when a CLI AI
 /// agent (Claude Code, Codex, ...) finishes a turn.
 struct AgentActivityInfo: Equatable {
@@ -39,48 +84,8 @@ struct AgentActivityInfo: Equatable {
                                  app: q("app"))
     }
 
-    /// Desktop app that owns this tool, if any.
-    static func desktopAppBundleID(for tool: String) -> String? {
-        switch tool.lowercased() {
-        case "claude": return "com.anthropic.claudefordesktop"
-        case "codex":  return "com.openai.codex"          // ChatGPT.app
-        default:       return nil
-        }
-    }
-
     /// Bring the relevant app to the front when the card is tapped.
-    ///
-    /// Prefers the tool's desktop app (Claude / ChatGPT); falls back to the
-    /// app the agent ran in (terminal, editor) when there is no desktop app
-    /// for the tool or it isn't installed.
-    ///
-    /// Only ever *activates* an already-running app — never re-opens one.
-    /// Re-opening a running app makes some terminals (iTerm2) spawn a fresh
-    /// empty window. A desktop app that is installed but not running is
-    /// launched, since that has no such side effect.
-    func activateSourceApp() {
-        if let desktop = AgentActivityInfo.desktopAppBundleID(for: tool) {
-            if activateRunning(desktop) { return }
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: desktop) {
-                let config = NSWorkspace.OpenConfiguration()
-                config.activates = true
-                NSWorkspace.shared.openApplication(at: url, configuration: config)
-                return
-            }
-        }
-        _ = activateRunning(app)
-    }
-
-    /// Activate a running app by bundle id. Returns false if it isn't running.
-    @discardableResult
-    private func activateRunning(_ bundleID: String) -> Bool {
-        guard !bundleID.isEmpty,
-              let running = NSWorkspace.shared.runningApplications
-                  .first(where: { $0.bundleIdentifier == bundleID })
-        else { return false }
-        running.activate(options: [.activateAllWindows])
-        return true
-    }
+    func activateSourceApp() { AgentAppLauncher.activate(tool: tool, sourceApp: app) }
 
     static func displayName(for tool: String) -> String {
         switch tool.lowercased() {

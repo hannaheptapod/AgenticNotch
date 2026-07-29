@@ -90,6 +90,11 @@ struct AgentActivityRecord: Codable, Defaults.Serializable, Identifiable, Equata
     var isOK: Bool { status == AgentStatus.ok.rawValue }
     var displayTool: String { AgentActivityInfo.displayName(for: tool) }
     var titleText: String { title ?? "" }
+
+    /// Bring the tool's desktop app (or the app the run happened in) forward.
+    func activateSourceApp() {
+        AgentAppLauncher.activate(tool: tool, sourceApp: app ?? "")
+    }
 }
 
 extension Defaults.Keys {
