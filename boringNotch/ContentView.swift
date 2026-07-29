@@ -64,7 +64,8 @@ struct ContentView: View {
         if coordinator.agentActivity.show && vm.notchState == .closed {
             chinWidth = 420
         } else if !coordinator.liveRuns.isEmpty && vm.notchState == .closed {
-            chinWidth = 380
+            // The housing eats ~200pt of this, so the flanks need real room.
+            chinWidth = 460
         } else if coordinator.expandingView.type == .battery && coordinator.expandingView.show
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
@@ -739,11 +740,15 @@ struct AgentActivityView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 12)
 
+                Spacer(minLength: 0)
+
                 Rectangle().fill(.black).frame(width: notchGap)
+
+                Spacer(minLength: 0)
 
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.triangle.branch")
@@ -754,7 +759,6 @@ struct AgentActivityView: View {
                         .foregroundStyle(.gray)
                         .lineLimit(1)
                 }
-                .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.trailing, 12)
             }
             .frame(height: max(notchHeight, 24))
@@ -793,6 +797,7 @@ struct AgentLiveActivityView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                 if runs.count > 1 {
                     Text("+\(runs.count - 1)")
                         .font(.system(size: 10, weight: .semibold))
@@ -801,10 +806,16 @@ struct AgentLiveActivityView: View {
                         .background(Color.white.opacity(0.12), in: Capsule())
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 12)
 
+            // A spacer on each side of the gap keeps it centred on the housing
+            // while each flank takes only the width it actually needs, instead
+            // of both being pinned to half of what's left.
+            Spacer(minLength: 0)
+
             Rectangle().fill(.black).frame(width: notchGap)
+
+            Spacer(minLength: 0)
 
             HStack(spacing: 6) {
                 if let p = primary, !p.detail.isEmpty {
@@ -827,7 +838,6 @@ struct AgentLiveActivityView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, 12)
         }
         .frame(height: max(notchHeight, 24))
