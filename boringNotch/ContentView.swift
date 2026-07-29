@@ -1044,7 +1044,7 @@ struct AIQuotaView: View {
                                     Text(p.stale ? "\(e) — showing last known" : e)
                                         .font(.system(size: 12)).foregroundStyle(.orange)
                                 } else if p.stale {
-                                    Text("last known values")
+                                    Text("last known — refreshes when an agent finishes")
                                         .font(.system(size: 11)).foregroundStyle(.gray)
                                 }
                                 if p.windows.isEmpty {
@@ -1067,18 +1067,12 @@ struct AIQuotaView: View {
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            // Refetch on appear (throttled — flicking the notch open and
-            // closed shouldn't hammer the usage endpoints), then poll while
-            // the tab is on screen. Previously this only ran when `providers`
-            // was empty, so the percentages stayed frozen at their first
-            // value for the whole lifetime of the app.
+            // Catch up on anything that happened while the tab was closed
+            // (throttled — flicking the notch open and closed shouldn't
+            // hammer the usage endpoints). There is no poll loop: usage only
+            // moves when an agent turn finishes, and showAgentActivity()
+            // refreshes on that event.
             await quota.refresh()
-            while !Task.isCancelled {
-                let interval = max(15, Defaults[.quotaRefreshSeconds])
-                try? await Task.sleep(for: .seconds(interval))
-                if Task.isCancelled { break }
-                await quota.refresh(force: true)
-            }
         }
     }
 }

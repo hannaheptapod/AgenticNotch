@@ -531,6 +531,10 @@ class BoringViewCoordinator: ObservableObject {
         // Clear the live run immediately — the notification itself is debounced,
         // but "still running" must stop being true the moment the turn ends.
         finishAgentRun(info)
+        // A finished turn is the only local event that moves the usage
+        // numbers, so this is where the AI limits tab gets its data —
+        // there is no polling. (Throttled inside refresh().)
+        Task { await AIQuotaManager.shared.refresh() }
         pendingAgentInfo = info
         agentDebounceTask?.cancel()
         let seconds = max(0, Defaults[.agentDebounceSeconds])

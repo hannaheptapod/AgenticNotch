@@ -1813,7 +1813,6 @@ struct AgentsSettings: View {
     @Default(.agentDebounceSeconds) var debounce
     @Default(.agentHistory) var history
     @Default(.agentHistoryLimit) var historyLimit
-    @Default(.quotaRefreshSeconds) var quotaRefresh
 
     private let systemSounds = ["Glass", "Ping", "Pop", "Blow", "Bottle", "Frog",
                                 "Funk", "Hero", "Morse", "Purr", "Sosumi", "Submarine", "Tink"]
@@ -1843,8 +1842,6 @@ struct AgentsSettings: View {
                         value: $autoCollapse, in: 1...15)
                 Stepper("Keep \(historyLimit) runs in history",
                         value: $historyLimit, in: 1...50)
-                Stepper("Refresh AI limits every \(Int(quotaRefresh))s",
-                        value: $quotaRefresh, in: 15...600, step: 15)
             } header: {
                 Text("Timing")
             } footer: {
