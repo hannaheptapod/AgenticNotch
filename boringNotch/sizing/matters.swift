@@ -14,7 +14,19 @@ let batterySneakSize: CGSize = .init(width: 160, height: 1)
 
 let shadowPadding: CGFloat = 20
 let openNotchSize: CGSize = .init(width: 640, height: 190)
-let windowSize: CGSize = .init(width: openNotchSize.width, height: openNotchSize.height + shadowPadding)
+/// Tabs that show a scrolling list get a taller sheet, so more than two rows fit.
+let tallOpenNotchHeight: CGFloat = 320
+/// The window is created once, so it has to fit the tallest state we can reach.
+let maxOpenNotchHeight: CGFloat = max(openNotchSize.height, tallOpenNotchHeight)
+let windowSize: CGSize = .init(width: openNotchSize.width, height: maxOpenNotchHeight + shadowPadding)
+
+/// How tall the opened notch should be for a given tab.
+func openNotchHeight(for view: NotchViews) -> CGFloat {
+    switch view {
+    case .agents, .quota: return tallOpenNotchHeight
+    case .home, .shelf:   return openNotchSize.height
+    }
+}
 let cornerRadiusInsets: (opened: (top: CGFloat, bottom: CGFloat), closed: (top: CGFloat, bottom: CGFloat)) = (opened: (top: 19, bottom: 24), closed: (top: 6, bottom: 14))
 
 enum MusicPlayerImageSizes {
