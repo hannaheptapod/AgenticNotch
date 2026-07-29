@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Codex allows a single `notify` program, so this fans one event out to two:
+# the original handler (Codex Computer Use) and AgenticNotch.
+#
+# Both are launched detached and all failures are swallowed: a notifier must
+# never delay or break a Codex turn.
+
+ORIGINAL="/Users/jink/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+AGENTICNOTCH="/Users/jink/dev/pers/AgenticNotch/scripts/agenticnotch-notify"
+
+# Preserve the original invocation exactly, including the trailing JSON payload.
+if [ -x "$ORIGINAL" ]; then
+  "$ORIGINAL" "$@" >/dev/null 2>&1 &
+fi
+
+# Codex passes "turn-ended" plus the payload; agenticnotch-notify picks the
+# JSON argument out of the list and ignores the rest.
+if [ -x "$AGENTICNOTCH" ]; then
+  "$AGENTICNOTCH" --tool codex "$@" >/dev/null 2>&1 &
+fi
+
+exit 0

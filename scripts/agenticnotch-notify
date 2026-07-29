@@ -26,6 +26,9 @@ while [ $# -gt 0 ]; do
     --project) project="${2:-}"; project_explicit=1; shift 2 ;;
     --title)   title="${2:-}"; shift 2 ;;
     --app)     app="${2:-}"; shift 2 ;;
+    # Codex's `notify` appends its event payload as a trailing JSON argument
+    # rather than on stdin. Treat that as the hook payload too.
+    '{'*)      [ -z "$hook_json" ] && hook_json="$1"; shift ;;
     *)         shift ;;
   esac
 done
@@ -58,6 +61,11 @@ out, status, cwd = "", "ok", ""
 try:
     hook = json.loads(raw)
     cwd = hook.get("cwd", "") or ""
+    # The Codex notify payload carries the text directly and has no transcript.
+    direct = hook.get("last-assistant-message") or hook.get("last_agent_message")
+    if isinstance(direct, str) and direct.strip():
+        out = direct
+        raise StopIteration            # skip transcript scanning below
     tp = os.path.expanduser(hook.get("transcript_path", "") or "")
     last = ""        # text of the most recent assistant message (may be empty if tool-only)
     last_text = ""   # last assistant message that actually had text (fallback)
@@ -114,6 +122,8 @@ try:
         status = "error"
     # Prefer the final assistant text; fall back to the last non-empty one.
     out = last if last.strip() else last_text
+except StopIteration:
+    pass                               # `out` already holds the direct message
 except Exception:
     out, status, cwd = "", "ok", ""
 out = " ".join(strip_markdown(out).split())
