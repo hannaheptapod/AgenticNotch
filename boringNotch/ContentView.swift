@@ -1019,7 +1019,7 @@ struct AIQuotaView: View {
                     ProgressView().controlSize(.small)
                 }
                 Button {
-                    Task { await quota.refresh() }
+                    Task { await quota.refresh(force: true) }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -1041,9 +1041,13 @@ struct AIQuotaView: View {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(.white)
                                 if let e = p.error {
-                                    Text(e).font(.system(size: 12)).foregroundStyle(.orange)
-                                } else if p.windows.isEmpty {
-                                    Text("—").font(.system(size: 12)).foregroundStyle(.gray)
+                                    Text(p.stale ? "\(e) — showing last known" : e)
+                                        .font(.system(size: 12)).foregroundStyle(.orange)
+                                }
+                                if p.windows.isEmpty {
+                                    if p.error == nil {
+                                        Text("—").font(.system(size: 12)).foregroundStyle(.gray)
+                                    }
                                 } else {
                                     ForEach(p.windows) { w in QuotaBar(window: w) }
                                 }
@@ -1060,16 +1064,17 @@ struct AIQuotaView: View {
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            // Always refetch on appear, then poll while the tab is on screen.
-            // Previously this only ran when `providers` was empty, so the
-            // percentages stayed frozen at their first value for the whole
-            // lifetime of the app.
+            // Refetch on appear (throttled — flicking the notch open and
+            // closed shouldn't hammer the usage endpoints), then poll while
+            // the tab is on screen. Previously this only ran when `providers`
+            // was empty, so the percentages stayed frozen at their first
+            // value for the whole lifetime of the app.
             await quota.refresh()
             while !Task.isCancelled {
                 let interval = max(15, Defaults[.quotaRefreshSeconds])
                 try? await Task.sleep(for: .seconds(interval))
                 if Task.isCancelled { break }
-                await quota.refresh()
+                await quota.refresh(force: true)
             }
         }
     }

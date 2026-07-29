@@ -602,6 +602,9 @@ struct ProviderQuota: Identifiable {
     let provider: String       // "Claude", "Codex"
     var windows: [QuotaWindow]
     var error: String?
+    /// True when `windows` came from an earlier fetch and we're still showing
+    /// them because the latest one failed.
+    var stale = false
 }
 
 /// Reads local Claude/Codex credentials and queries their usage endpoints.
@@ -614,15 +617,57 @@ final class AIQuotaManager: ObservableObject {
     @Published var isLoading = false
     @Published var lastUpdated: Date?
 
+    /// Endpoints we're rate limited on, and when it's worth asking again.
+    private var backoffUntil: [String: Date] = [:]
+    /// Reopening the tab shouldn't fire a request every time — the numbers
+    /// don't move that fast, and the usage endpoints answer 429 if you ask too
+    /// often.
+    private let minRefreshInterval: TimeInterval = 20
+
     private init() {}
 
-    func refresh() async {
+    /// `force` skips the throttle: use it for the poll timer and the manual
+    /// refresh button, not for the on-appear fetch.
+    func refresh(force: Bool = false) async {
+        if !force, let last = lastUpdated, Date().timeIntervalSince(last) < minRefreshInterval {
+            return
+        }
         isLoading = true
         let claude = await fetchClaude()
         let codex = await fetchCodex()
-        providers = [claude, codex].compactMap { $0 }
+        providers = [claude, codex].compactMap { $0 }.map(keepingLastGoodWindows)
         lastUpdated = Date()
         isLoading = false
+    }
+
+    /// A rate limit or a dropped connection shouldn't blank out numbers we
+    /// already have. Keep the previous windows and let the view mark them as
+    /// stale, so a transient failure costs freshness rather than the whole card.
+    private func keepingLastGoodWindows(_ fresh: ProviderQuota) -> ProviderQuota {
+        guard fresh.error != nil, fresh.windows.isEmpty,
+              let previous = providers.first(where: { $0.provider == fresh.provider }),
+              !previous.windows.isEmpty
+        else { return fresh }
+
+        var merged = fresh
+        merged.windows = previous.windows
+        merged.stale = true
+        return merged
+    }
+
+    /// Seconds left on a 429 backoff, or nil when we're free to ask again.
+    private func backoffRemaining(_ provider: String) -> Int? {
+        guard let until = backoffUntil[provider], until > Date() else { return nil }
+        return max(1, Int(until.timeIntervalSinceNow.rounded(.up)))
+    }
+
+    /// Honour Retry-After when the server sends one; two minutes is a guess
+    /// that's long enough to actually clear a per-minute limit.
+    private func startBackoff(_ provider: String, response: URLResponse?) -> Int {
+        let header = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After")
+        let seconds = header.flatMap(Double.init) ?? 120
+        backoffUntil[provider] = Date().addingTimeInterval(seconds)
+        return Int(seconds)
     }
 
     // MARK: Reset timestamps
@@ -646,6 +691,9 @@ final class AIQuotaManager: ObservableObject {
     // MARK: Claude
 
     private func fetchClaude() async -> ProviderQuota? {
+        if let secs = backoffRemaining("Claude") {
+            return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(secs)s")
+        }
         guard let token = claudeToken() else {
             return ProviderQuota(provider: "Claude", windows: [], error: "No credentials found")
         }
@@ -657,6 +705,10 @@ final class AIQuotaManager: ObservableObject {
             let (data, resp) = try await URLSession.shared.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if code == 401 { return ProviderQuota(provider: "Claude", windows: [], error: "Session expired — log in again") }
+            if code == 429 {
+                let secs = startBackoff("Claude", response: resp)
+                return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(secs)s")
+            }
             guard code == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return ProviderQuota(provider: "Claude", windows: [], error: "API error (\(code))")
@@ -749,6 +801,9 @@ final class AIQuotaManager: ObservableObject {
     // MARK: Codex
 
     private func fetchCodex() async -> ProviderQuota? {
+        if let secs = backoffRemaining("Codex") {
+            return ProviderQuota(provider: "Codex", windows: [], error: "Rate limited — retrying in \(secs)s")
+        }
         let path = ("~/.codex/auth.json" as NSString).expandingTildeInPath
         guard let data = FileManager.default.contents(atPath: path),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -769,6 +824,10 @@ final class AIQuotaManager: ObservableObject {
             let (respData, resp) = try await URLSession.shared.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if code == 401 { return ProviderQuota(provider: "Codex", windows: [], error: "Session expired — run 'codex' to renew") }
+            if code == 429 {
+                let secs = startBackoff("Codex", response: resp)
+                return ProviderQuota(provider: "Codex", windows: [], error: "Rate limited — retrying in \(secs)s")
+            }
             guard code == 200,
                   let j = try JSONSerialization.jsonObject(with: respData) as? [String: Any],
                   let rate = j["rate_limit"] as? [String: Any] else {
