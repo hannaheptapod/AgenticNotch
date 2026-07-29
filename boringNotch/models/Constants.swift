@@ -105,6 +105,9 @@ extension Defaults.Keys {
     static let agentAutoCollapseSeconds = Key<Double>("agentAutoCollapseSeconds", default: 4)
     static let agentDebounceSeconds = Key<Double>("agentDebounceSeconds", default: 4)
     static let agentHistory = Key<[AgentActivityRecord]>("agentHistory", default: [])
+    static let agentHistoryLimit = Key<Int>("agentHistoryLimit", default: 10)
+    /// How often the AI limits tab re-fetches usage while it is on screen.
+    static let quotaRefreshSeconds = Key<Double>("quotaRefreshSeconds", default: 60)
 
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)

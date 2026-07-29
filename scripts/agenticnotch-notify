@@ -15,7 +15,9 @@ if [ ! -t 0 ]; then
   IFS= read -r -d '' -t 1 hook_json <&0 || true
 fi
 
-tool=""; status="ok"; project="$(basename "$PWD")"; title=""; app="${__CFBundleIdentifier:-}"
+# status is left empty so it can be derived from the transcript; an explicit
+# --status always wins.
+tool=""; status=""; project="$(basename "$PWD")"; title=""; app="${__CFBundleIdentifier:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --tool)    tool="${2:-}"; shift 2 ;;
@@ -27,17 +29,38 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Derive a short summary from the hook JSON's transcript (last assistant text).
-if [ -z "$title" ] && [ -n "$hook_json" ]; then
-  title="$(HOOK_JSON="$hook_json" python3 -c '
-import os, json
+# Derive the summary and the ok/error status from the hook JSON's transcript.
+# Emits two lines: status, then title.
+if [ -n "$hook_json" ] && { [ -z "$title" ] || [ -z "$status" ]; }; then
+  derived="$(HOOK_JSON="$hook_json" python3 -c '
+import os, json, re
+
+def strip_markdown(s):
+    """Flatten markdown so the notch shows prose, not syntax."""
+    s = re.sub(r"```.*?```", " ", s, flags=re.S)          # fenced code blocks
+    s = re.sub(r"`([^`]*)`", r"\1", s)                     # inline code
+    s = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", s)        # images
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)         # links -> text
+    s = re.sub(r"^\s{0,3}#{1,6}\s*", "", s, flags=re.M)    # headings
+    s = re.sub(r"^\s{0,3}>\s?", "", s, flags=re.M)         # block quotes
+    s = re.sub(r"^\s*[-*+]\s+", "", s, flags=re.M)         # bullets
+    s = re.sub(r"^\s*\d+\.\s+", "", s, flags=re.M)         # numbered lists
+    s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)               # bold
+    s = re.sub(r"(?<!\w)[*_]([^*_]+)[*_](?!\w)", r"\1", s) # italics
+    s = re.sub(r"~~([^~]+)~~", r"\1", s)                   # strikethrough
+    s = re.sub(r"^\s*[-*_]{3,}\s*$", " ", s, flags=re.M)   # rules
+    s = re.sub(r"\|", " ", s)                              # table pipes
+    return s
+
 raw = os.environ.get("HOOK_JSON", "")
-out = ""
+out, status = "", "ok"
 try:
     hook = json.loads(raw)
     tp = os.path.expanduser(hook.get("transcript_path", "") or "")
     last = ""        # text of the most recent assistant message (may be empty if tool-only)
     last_text = ""   # last assistant message that actually had text (fallback)
+    saw_error = False
+    last_stop_reason = None
     if tp:
         with open(tp) as f:
             for line in f:
@@ -45,9 +68,14 @@ try:
                     m = json.loads(line)
                 except Exception:
                     continue
+                # Claude Code flags API failures on the entry itself.
+                if m.get("isApiErrorMessage"):
+                    saw_error = True
                 msg = m.get("message", m)
                 if not isinstance(msg, dict) or msg.get("role") != "assistant":
                     continue
+                if msg.get("stop_reason") is not None:
+                    last_stop_reason = msg.get("stop_reason")
                 c = msg.get("content")
                 if isinstance(c, list):
                     parts = [b.get("text", "") for b in c
@@ -59,16 +87,26 @@ try:
                     last = ""
                 if last.strip():
                     last_text = last
+                    saw_error = False   # a later real reply supersedes an earlier error
+    # A turn that ends on anything but end_turn/tool_use did not finish cleanly.
+    if saw_error or (last_stop_reason not in (None, "end_turn", "tool_use")):
+        status = "error"
     # Prefer the final assistant text; fall back to the last non-empty one.
     out = last if last.strip() else last_text
 except Exception:
-    out = ""
-out = " ".join(out.split())
+    out, status = "", "ok"
+out = " ".join(strip_markdown(out).split())
 if len(out) > 60:
     out = out[:57].rstrip() + "…"
+print(status)
 print(out)
-' 2>/dev/null || true)"
+' 2>/dev/null || printf 'ok\n\n')"
+  derived_status="$(printf '%s' "$derived" | sed -n '1p')"
+  derived_title="$(printf '%s' "$derived" | sed -n '2p')"
+  [ -z "$status" ] && status="${derived_status:-ok}"
+  [ -z "$title" ] && title="$derived_title"
 fi
+[ -z "$status" ] && status="ok"
 
 enc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "${1:-}"; }
 url="agenticnotch://done?tool=$(enc "$tool")&status=$(enc "$status")&project=$(enc "$project")&title=$(enc "$title")&app=$(enc "$app")"

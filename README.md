@@ -128,16 +128,19 @@ Wire your agents to the bundled script (use the absolute path to it):
   "hooks": {
     "Stop": [
       { "hooks": [ { "type": "command",
-        "command": "/Users/globalcontact/Proyectos/AgenticNotch/scripts/agenticnotch-notify --tool claude --status ok" } ] }
+        "command": "/path/to/AgenticNotch/scripts/agenticnotch-notify --tool claude" } ] }
     ]
   }
 }
 ```
-`project` defaults to the basename of the hook's working directory.
+`project` defaults to the basename of the hook's working directory, and `app`
+to the terminal/editor the agent ran in, so tapping the card jumps back to it.
+`status` is derived from the transcript (API errors and unclean stops become
+`error`); pass `--status ok|error` to force it.
 
 **Codex** — add to `~/.codex/config.toml`:
 ```toml
-notify = ["/Users/globalcontact/Proyectos/AgenticNotch/scripts/agenticnotch-notify", "--tool", "codex", "--status", "ok"]
+notify = ["/path/to/AgenticNotch/scripts/agenticnotch-notify", "--tool", "codex"]
 ```
 Codex appends a JSON event payload as a trailing argument; the script ignores it.
 

@@ -452,11 +452,12 @@ class BoringViewCoordinator: ObservableObject {
         }
     }
 
-    /// Prepend to the agent history, keeping only the last 10 entries.
+    /// Prepend to the agent history, trimming to the configured limit.
     private func recordAgentHistory(_ info: AgentActivityInfo) {
         var history = Defaults[.agentHistory]
         history.insert(AgentActivityRecord(info: info, date: Date()), at: 0)
-        if history.count > 10 { history = Array(history.prefix(10)) }
+        let limit = max(1, Defaults[.agentHistoryLimit])
+        if history.count > limit { history = Array(history.prefix(limit)) }
         Defaults[.agentHistory] = history
     }
 }
@@ -468,11 +469,29 @@ struct AgentActivityState {
 
 // MARK: - AI quota / limits (AgenticNotch)
 
+/// Severity reported by the provider, when it reports one. Drives the bar
+/// colour so it matches the provider's own judgement instead of our guess.
+enum QuotaSeverity: String {
+    case normal, warning, critical
+
+    var color: Color {
+        switch self {
+        case .normal:   return .green
+        case .warning:  return .orange
+        case .critical: return .red
+        }
+    }
+}
+
 struct QuotaWindow: Identifiable {
     let id = UUID()
     let label: String         // "5h", "7d", ...
     let usedPercent: Double    // 0...100
     let resetAt: Date?
+    /// nil when the provider doesn't report one — fall back to a percentage.
+    var severity: QuotaSeverity?
+    /// Extra note shown next to the label, e.g. remaining credits.
+    var note: String?
 }
 
 struct ProviderQuota: Identifiable {
@@ -545,21 +564,67 @@ final class AIQuotaManager: ObservableObject {
         }
     }
 
+    /// Human labels for the usage windows Anthropic returns. Unknown keys fall
+    /// back to a de-underscored form rather than being dropped, so newly added
+    /// windows still show up.
+    private static let claudeWindowLabels = [
+        "five_hour": "5h",
+        "seven_day": "7d",
+        "seven_day_opus": "7d Opus",
+        "seven_day_sonnet": "7d Sonnet",
+        "seven_day_cowork": "7d Cowork",
+        "seven_day_oauth_apps": "7d Apps",
+        "seven_day_omelette": "7d Omelette",
+    ]
+
+    /// Keys that carry a `utilization` field but are not usage windows.
+    private static let claudeNonWindowKeys: Set<String> = ["extra_usage"]
+
     private func parseClaudeWindows(_ json: [String: Any]) -> [QuotaWindow] {
-        let labels = ["five_hour": "5h", "seven_day": "7d",
-                      "seven_day_opus": "7d Opus", "seven_day_sonnet": "7d Sonnet"]
+        // `limits` reports the provider's own severity per group; map it onto
+        // the windows by percentage so colours match Anthropic's judgement.
+        var severityByPercent: [Int: QuotaSeverity] = [:]
+        for entry in (json["limits"] as? [[String: Any]] ?? []) {
+            guard let pct = (entry["percent"] as? Double) ?? (entry["percent"] as? NSNumber)?.doubleValue,
+                  let raw = entry["severity"] as? String,
+                  let sev = QuotaSeverity(rawValue: raw) else { continue }
+            severityByPercent[Int(pct)] = sev
+        }
+
         var out: [QuotaWindow] = []
         for (key, value) in json {
-            guard let dict = value as? [String: Any] else { continue }
-            guard let util = (dict["utilization"] as? Double) ?? (dict["utilization"] as? NSNumber)?.doubleValue
+            guard !Self.claudeNonWindowKeys.contains(key),
+                  let dict = value as? [String: Any],
+                  let util = (dict["utilization"] as? Double) ?? (dict["utilization"] as? NSNumber)?.doubleValue
             else { continue }
-            let reset = AIQuotaManager.parseResetDate(dict["resets_at"] ?? dict["reset_at"])
-            out.append(QuotaWindow(label: labels[key] ?? key.replacingOccurrences(of: "_", with: " "),
-                                   usedPercent: util,
-                                   resetAt: reset))
+            out.append(QuotaWindow(
+                label: Self.claudeWindowLabels[key] ?? key.replacingOccurrences(of: "_", with: " "),
+                usedPercent: util,
+                resetAt: AIQuotaManager.parseResetDate(dict["resets_at"] ?? dict["reset_at"]),
+                severity: severityByPercent[Int(util)]))
         }
-        let order = ["5h", "7d", "7d Sonnet", "7d Opus"]
-        return out.sorted { (order.firstIndex(of: $0.label) ?? 99) < (order.firstIndex(of: $1.label) ?? 99) }
+
+        if let extra = extraUsageWindow(json) { out.append(extra) }
+
+        let order = ["5h", "7d", "7d Sonnet", "7d Opus", "7d Cowork", "7d Apps"]
+        return out.sorted { (order.firstIndex(of: $0.label) ?? 98) < (order.firstIndex(of: $1.label) ?? 98) }
+    }
+
+    /// Pay-as-you-go credits, shown only when the account has them enabled.
+    private func extraUsageWindow(_ json: [String: Any]) -> QuotaWindow? {
+        guard let extra = json["extra_usage"] as? [String: Any],
+              (extra["is_enabled"] as? Bool) == true,
+              let util = (extra["utilization"] as? Double) ?? (extra["utilization"] as? NSNumber)?.doubleValue
+        else { return nil }
+        var note: String?
+        if let limit = (extra["monthly_limit"] as? Double) ?? (extra["monthly_limit"] as? NSNumber)?.doubleValue {
+            let used = (extra["used_credits"] as? Double) ?? (extra["used_credits"] as? NSNumber)?.doubleValue ?? 0
+            let currency = (extra["currency"] as? String) ?? ""
+            note = "\(Int(used))/\(Int(limit)) \(currency)".trimmingCharacters(in: .whitespaces)
+        }
+        return QuotaWindow(label: "Extra usage", usedPercent: util, resetAt: nil,
+                           severity: (extra["spend_limit_reached"] as? Bool) == true ? .critical : nil,
+                           note: note)
     }
 
     private func claudeToken() -> String? {

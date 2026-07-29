@@ -850,6 +850,13 @@ struct AIQuotaView: View {
                 Text("AI Limits")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
+                if let updated = quota.lastUpdated {
+                    TimelineView(.periodic(from: .now, by: 10)) { _ in
+                        Text("updated \(updated.formatted(.relative(presentation: .named)))")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.gray.opacity(0.7))
+                    }
+                }
                 Spacer()
                 if quota.isLoading {
                     ProgressView().controlSize(.small)
@@ -896,7 +903,17 @@ struct AIQuotaView: View {
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            if quota.providers.isEmpty { await quota.refresh() }
+            // Always refetch on appear, then poll while the tab is on screen.
+            // Previously this only ran when `providers` was empty, so the
+            // percentages stayed frozen at their first value for the whole
+            // lifetime of the app.
+            await quota.refresh()
+            while !Task.isCancelled {
+                let interval = max(15, Defaults[.quotaRefreshSeconds])
+                try? await Task.sleep(for: .seconds(interval))
+                if Task.isCancelled { break }
+                await quota.refresh()
+            }
         }
     }
 }
@@ -904,12 +921,18 @@ struct AIQuotaView: View {
 struct QuotaBar: View {
     let window: QuotaWindow
     private var pct: Double { max(0, min(100, window.usedPercent)) }
-    private var color: Color { pct >= 90 ? .red : (pct >= 70 ? .orange : .green) }
+    /// Prefer the provider's own severity; fall back to thresholds.
+    private var color: Color {
+        window.severity?.color ?? (pct >= 90 ? .red : (pct >= 70 ? .orange : .green))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(window.label).font(.system(size: 10)).foregroundStyle(.gray)
+                if let note = window.note {
+                    Text(note).font(.system(size: 9)).foregroundStyle(.gray.opacity(0.7))
+                }
                 Spacer()
                 Text("\(Int(pct))% used").font(.system(size: 10, weight: .medium)).foregroundStyle(.white)
             }
