@@ -1067,12 +1067,11 @@ struct AIQuotaView: View {
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            // Catch up on anything that happened while the tab was closed
-            // (throttled — flicking the notch open and closed shouldn't
-            // hammer the usage endpoints). There is no poll loop: usage only
-            // moves when an agent turn finishes, and showAgentActivity()
-            // refreshes on that event.
-            await quota.refresh()
+            // Catch up on usage from clients that don't send us events
+            // (claude.ai web, mobile). Opening the tab doesn't mean anything
+            // moved — local turns already refresh via showAgentActivity() —
+            // so only bother when the data is genuinely old.
+            await quota.refresh(ifOlderThan: 10 * 60)
         }
     }
 }

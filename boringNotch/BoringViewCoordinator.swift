@@ -661,10 +661,15 @@ final class AIQuotaManager: ObservableObject {
         Defaults[.aiQuotaCache] = try? JSONEncoder().encode(cache)
     }
 
-    /// `force` skips the throttle: use it for the poll timer and the manual
-    /// refresh button, not for the on-appear fetch.
-    func refresh(force: Bool = false) async {
-        if !force, let last = lastUpdated, Date().timeIntervalSince(last) < minRefreshInterval {
+    /// Skip the fetch unless the data is older than `ifOlderThan` seconds.
+    /// The default suits the turn-finished event (usage definitely changed;
+    /// only coalesce bursts). Passive triggers like opening the tab should
+    /// pass something much larger — they don't signal that anything moved,
+    /// and the endpoint bans eager clients for an hour. `force` is for the
+    /// manual refresh button only.
+    func refresh(ifOlderThan age: TimeInterval? = nil, force: Bool = false) async {
+        let minAge = age ?? minRefreshInterval
+        if !force, let last = lastUpdated, Date().timeIntervalSince(last) < minAge {
             return
         }
         isLoading = true
