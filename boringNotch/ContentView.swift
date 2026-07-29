@@ -853,7 +853,7 @@ struct AIQuotaView: View {
                 if let updated = quota.lastUpdated {
                     TimelineView(.periodic(from: .now, by: 10)) { _ in
                         Text("updated \(updated.formatted(.relative(presentation: .named)))")
-                            .font(.system(size: 9))
+                            .font(.system(size: 11))
                             .foregroundStyle(.gray.opacity(0.7))
                     }
                 }
@@ -879,14 +879,14 @@ struct AIQuotaView: View {
                 ScrollView {
                     VStack(spacing: 10) {
                         ForEach(quota.providers) { p in
-                            VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: 8) {
                                 Text(p.provider)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(.white)
                                 if let e = p.error {
-                                    Text(e).font(.caption).foregroundStyle(.orange)
+                                    Text(e).font(.system(size: 12)).foregroundStyle(.orange)
                                 } else if p.windows.isEmpty {
-                                    Text("—").font(.caption).foregroundStyle(.gray)
+                                    Text("—").font(.system(size: 12)).foregroundStyle(.gray)
                                 } else {
                                     ForEach(p.windows) { w in QuotaBar(window: w) }
                                 }
@@ -929,12 +929,12 @@ struct QuotaBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(window.label).font(.system(size: 10)).foregroundStyle(.gray)
+                Text(window.label).font(.system(size: 13, weight: .medium)).foregroundStyle(.gray)
                 if let note = window.note {
-                    Text(note).font(.system(size: 9)).foregroundStyle(.gray.opacity(0.7))
+                    Text(note).font(.system(size: 11)).foregroundStyle(.gray.opacity(0.7))
                 }
                 Spacer()
-                Text("\(Int(pct))% used").font(.system(size: 10, weight: .medium)).foregroundStyle(.white)
+                Text("\(Int(pct))% used").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -942,13 +942,13 @@ struct QuotaBar: View {
                     Capsule().fill(color).frame(width: geo.size.width * pct / 100)
                 }
             }
-            .frame(height: 5)
+            .frame(height: 7)
             if let reset = window.resetAt {
                 // Live countdown, refreshed every second.
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Text(QuotaBar.resetText(reset, now: context.date))
-                        .font(.system(size: 8))
-                        .foregroundStyle(.gray.opacity(0.7))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.gray.opacity(0.75))
                         .monospacedDigit()
                 }
             }
@@ -973,10 +973,12 @@ struct QuotaBar: View {
         } else {
             left = String(format: "%dm %02ds", m, s)
         }
-        // A bare clock time is ambiguous for resets days away — include the date.
+        // A bare clock time is ambiguous for resets days away — add the date,
+        // but keep it compact ("Aug 5, 4:00" rather than "Aug 5, 2026 at 4:00").
         let when = Calendar.current.isDate(reset, inSameDayAs: now)
             ? reset.formatted(date: .omitted, time: .shortened)
-            : reset.formatted(date: .abbreviated, time: .shortened)
+            : reset.formatted(.dateTime.month(.abbreviated).day()) + ", "
+              + reset.formatted(date: .omitted, time: .shortened)
         return "resets in \(left) · \(when)"
     }
 }
