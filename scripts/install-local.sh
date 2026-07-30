@@ -49,7 +49,7 @@ else
   )
 fi
 
-echo "Building ($CONFIG)…"
+echo "Building ($CONFIG)..."
 xcodebuild -project boringNotch.xcodeproj -scheme boringNotch \
   -configuration "$CONFIG" -derivedDataPath "$DERIVED" \
   "${SIGN_ARGS[@]}" build
@@ -59,7 +59,7 @@ xcodebuild -project boringNotch.xcodeproj -scheme boringNotch \
 echo "Requirement: $(codesign -d -r - "$BUILT_APP" 2>&1 | sed -n 's/^designated => //p')"
 
 if pgrep -f "$INSTALLED/Contents/MacOS/$APP_NAME" >/dev/null; then
-  echo "Quitting the running $APP_NAME…"
+  echo "Quitting the running $APP_NAME..."
   osascript -e "tell application \"$APP_NAME\" to quit" 2>/dev/null || true
   for _ in $(seq 1 20); do
     pgrep -f "$INSTALLED/Contents/MacOS/$APP_NAME" >/dev/null || break
@@ -68,7 +68,7 @@ if pgrep -f "$INSTALLED/Contents/MacOS/$APP_NAME" >/dev/null; then
   pkill -f "$INSTALLED/Contents/MacOS/$APP_NAME" 2>/dev/null || true
 fi
 
-echo "Installing to $INSTALLED…"
+echo "Installing to $INSTALLED..."
 rm -rf "$INSTALLED"
 ditto "$BUILT_APP" "$INSTALLED"
 
