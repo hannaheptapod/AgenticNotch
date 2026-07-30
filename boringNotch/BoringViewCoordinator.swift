@@ -744,36 +744,67 @@ final class AIQuotaManager: ObservableObject {
         if let secs = backoffRemaining("Claude") {
             return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
         }
-        guard let cred = claudeToken() else {
+        guard var cred = claudeToken() else {
             return ProviderQuota(provider: "Claude", windows: [], error: "No credentials found")
         }
-        // A request with an expired token is a guaranteed 401 — skip it and
-        // say what would fix it. Claude Code rewrites the keychain item when
-        // it next talks to the API, so any terminal `claude` turn heals this.
+        // A request with an expired token is a guaranteed 401 — renew first.
         if let expires = cred.expiresAt, expires < Date() {
-            let ago = Self.backoffText(Int(-expires.timeIntervalSinceNow))
-            return ProviderQuota(provider: "Claude", windows: [],
-                                 error: "Token expired \(ago) ago — run claude in a terminal to renew")
+            guard let renewed = await refreshClaudeToken() else {
+                let ago = Self.backoffText(Int(-expires.timeIntervalSinceNow))
+                return ProviderQuota(provider: "Claude", windows: [],
+                                     error: "Token expired \(ago) ago — renew failed, run claude to log in")
+            }
+            cred = renewed
         }
-        var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
-        req.setValue("Bearer \(cred.token)", forHTTPHeaderField: "Authorization")
-        req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            if code == 401 { return ProviderQuota(provider: "Claude", windows: [], error: "Session expired — log in again") }
-            if code == 429 {
+        var retried = false
+        while true {
+            switch await requestClaudeUsage(token: cred.token) {
+            case .ok(let json):
+                return ProviderQuota(provider: "Claude", windows: parseClaudeWindows(json), error: nil)
+            case .unauthorized:
+                // The token claimed to be valid but wasn't (revoked, or the
+                // stored expiry lied). One refresh, one retry, then give up.
+                if !retried, let renewed = await refreshClaudeToken() {
+                    cred = renewed
+                    retried = true
+                    continue
+                }
+                return ProviderQuota(provider: "Claude", windows: [], error: "Session expired — log in again")
+            case .rateLimited(let resp):
                 let secs = startBackoff("Claude", response: resp)
                 return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
-            }
-            guard code == 200,
-                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            case .apiError(let code):
                 return ProviderQuota(provider: "Claude", windows: [], error: "API error (\(code))")
+            case .network:
+                return ProviderQuota(provider: "Claude", windows: [], error: "Network error")
             }
-            return ProviderQuota(provider: "Claude", windows: parseClaudeWindows(json), error: nil)
-        } catch {
-            return ProviderQuota(provider: "Claude", windows: [], error: "Network error")
+        }
+    }
+
+    private enum ClaudeUsageResult {
+        case ok([String: Any])
+        case unauthorized
+        case rateLimited(URLResponse?)
+        case apiError(Int)
+        case network
+    }
+
+    private func requestClaudeUsage(token: String) async -> ClaudeUsageResult {
+        var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return .network }
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        switch code {
+        case 200:
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return .apiError(200)
+            }
+            return .ok(json)
+        case 401: return .unauthorized
+        case 429: return .rateLimited(resp)
+        default:  return .apiError(code)
         }
     }
 
@@ -838,6 +869,64 @@ final class AIQuotaManager: ObservableObject {
         return QuotaWindow(label: "Extra usage", usedPercent: util, resetAt: nil,
                            severity: (extra["spend_limit_reached"] as? Bool) == true ? .critical : nil,
                            note: note)
+    }
+
+    /// Claude Code's public OAuth client id — the same one the CLI itself
+    /// presents when refreshing. We are not impersonating a different app:
+    /// we act as another reader/writer of the same local login, exactly like
+    /// a second concurrent Claude Code session.
+    private static let claudeOAuthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+    private static let claudeCredentialService = "Claude Code-credentials"
+
+    /// Exchange the stored refresh token for a fresh access token and write
+    /// the result back where Claude Code keeps it. The write-back is not
+    /// optional politeness: Anthropic rotates refresh tokens, so consuming
+    /// one without storing its replacement would strand the CLI's login.
+    private func refreshClaudeToken() async -> (token: String, expiresAt: Date?)? {
+        // Re-read at refresh time — another session may have renewed already.
+        let fromKeychain = keychainJSON(service: Self.claudeCredentialService)
+        let filePath = ("~/.claude/.credentials.json" as NSString).expandingTildeInPath
+        let fromFile: [String: Any]? = fromKeychain != nil ? nil
+            : FileManager.default.contents(atPath: filePath)
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        guard var json = fromKeychain ?? fromFile else { return nil }
+        guard let key = ["claudeAiOauth", "claude.ai_oauth"].first(where: { json[$0] is [String: Any] }),
+              var oauth = json[key] as? [String: Any],
+              let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty
+        else { return nil }
+
+        // Someone else may have refreshed since we saw the expired token.
+        if let cred = oauthAccessToken(json), let exp = cred.expiresAt, exp > Date().addingTimeInterval(60) {
+            return cred
+        }
+
+        var req = URLRequest(url: URL(string: "https://console.anthropic.com/v1/oauth/token")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "grant_type": "refresh_token",
+            "refresh_token": refreshToken,
+            "client_id": Self.claudeOAuthClientID,
+        ])
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let newToken = body["access_token"] as? String
+        else { return nil }
+
+        let expiresAt = (body["expires_in"] as? Double).map { Date().addingTimeInterval($0) }
+        oauth["accessToken"] = newToken
+        // Keep the old refresh token if the server didn't rotate it.
+        oauth["refreshToken"] = (body["refresh_token"] as? String) ?? refreshToken
+        if let expiresAt { oauth["expiresAt"] = expiresAt.timeIntervalSince1970 * 1000 }
+        json[key] = oauth
+
+        if fromKeychain != nil {
+            keychainWriteJSON(service: Self.claudeCredentialService, json: json)
+        } else if let data = try? JSONSerialization.data(withJSONObject: json) {
+            try? data.write(to: URL(fileURLWithPath: filePath), options: .atomic)
+        }
+        return (newToken, expiresAt)
     }
 
     private func claudeToken() -> (token: String, expiresAt: Date?)? {
@@ -946,5 +1035,16 @@ final class AIQuotaManager: ObservableObject {
             return nil
         }
         return json
+    }
+
+    @discardableResult
+    private func keychainWriteJSON(service: String, json: [String: Any]) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: json) else { return false }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service
+        ]
+        let update: [String: Any] = [kSecValueData as String: data]
+        return SecItemUpdate(query as CFDictionary, update as CFDictionary) == errSecSuccess
     }
 }
