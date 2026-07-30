@@ -531,6 +531,10 @@ class BoringViewCoordinator: ObservableObject {
         // Clear the live run immediately — the notification itself is debounced,
         // but "still running" must stop being true the moment the turn ends.
         finishAgentRun(info)
+        // A finished turn is the only local event that moves the usage
+        // numbers, so this is where the AI limits tab gets its data —
+        // there is no polling. (Throttled inside refresh().)
+        Task { await AIQuotaManager.shared.refresh() }
         pendingAgentInfo = info
         agentDebounceTask?.cancel()
         let seconds = max(0, Defaults[.agentDebounceSeconds])
@@ -574,7 +578,7 @@ struct AgentActivityState {
 
 /// Severity reported by the provider, when it reports one. Drives the bar
 /// colour so it matches the provider's own judgement instead of our guess.
-enum QuotaSeverity: String {
+enum QuotaSeverity: String, Codable {
     case normal, warning, critical
 
     var color: Color {
@@ -586,7 +590,7 @@ enum QuotaSeverity: String {
     }
 }
 
-struct QuotaWindow: Identifiable {
+struct QuotaWindow: Identifiable, Codable {
     let id = UUID()
     let label: String         // "5h", "7d", ...
     let usedPercent: Double    // 0...100
@@ -595,6 +599,9 @@ struct QuotaWindow: Identifiable {
     var severity: QuotaSeverity?
     /// Extra note shown next to the label, e.g. remaining credits.
     var note: String?
+
+    // `id` is display identity only — don't persist it.
+    enum CodingKeys: String, CodingKey { case label, usedPercent, resetAt, severity, note }
 }
 
 struct ProviderQuota: Identifiable {
@@ -602,6 +609,9 @@ struct ProviderQuota: Identifiable {
     let provider: String       // "Claude", "Codex"
     var windows: [QuotaWindow]
     var error: String?
+    /// True when `windows` came from an earlier fetch and we're still showing
+    /// them because the latest one failed.
+    var stale = false
 }
 
 /// Reads local Claude/Codex credentials and queries their usage endpoints.
@@ -614,15 +624,100 @@ final class AIQuotaManager: ObservableObject {
     @Published var isLoading = false
     @Published var lastUpdated: Date?
 
-    private init() {}
+    /// Endpoints we're rate limited on, and when it's worth asking again.
+    private var backoffUntil: [String: Date] = [:]
+    /// Reopening the tab shouldn't fire a request every time — the numbers
+    /// don't move that fast, and the usage endpoints answer 429 if you ask too
+    /// often.
+    private let minRefreshInterval: TimeInterval = 20
 
-    func refresh() async {
+    /// Last successful windows per provider, survives restarts. Without this a
+    /// relaunch during a rate-limit ban shows an empty card for the whole ban
+    /// even though we had perfectly good numbers minutes earlier.
+    private struct QuotaCache: Codable {
+        var windows: [String: [QuotaWindow]]
+        var updated: Date
+    }
+
+    private init() {
+        guard let data = Defaults[.aiQuotaCache],
+              let cache = try? JSONDecoder().decode(QuotaCache.self, from: data)
+        else { return }
+        providers = cache.windows
+            .sorted { $0.key < $1.key }   // "Claude" before "Codex", stable order
+            .map { ProviderQuota(provider: $0.key, windows: $0.value, error: nil, stale: true) }
+        lastUpdated = cache.updated
+    }
+
+    private func saveCache() {
+        var cache = QuotaCache(windows: [:], updated: lastUpdated ?? Date())
+        if let data = Defaults[.aiQuotaCache],
+           let existing = try? JSONDecoder().decode(QuotaCache.self, from: data) {
+            cache.windows = existing.windows
+        }
+        for p in providers where p.error == nil && !p.stale && !p.windows.isEmpty {
+            cache.windows[p.provider] = p.windows
+        }
+        Defaults[.aiQuotaCache] = try? JSONEncoder().encode(cache)
+    }
+
+    /// Skip the fetch unless the data is older than `ifOlderThan` seconds.
+    /// The default suits the turn-finished event (usage definitely changed;
+    /// only coalesce bursts). Passive triggers like opening the tab should
+    /// pass something much larger — they don't signal that anything moved,
+    /// and the endpoint bans eager clients for an hour. `force` is for the
+    /// manual refresh button only.
+    func refresh(ifOlderThan age: TimeInterval? = nil, force: Bool = false) async {
+        let minAge = age ?? minRefreshInterval
+        if !force, let last = lastUpdated, Date().timeIntervalSince(last) < minAge {
+            return
+        }
         isLoading = true
         let claude = await fetchClaude()
         let codex = await fetchCodex()
-        providers = [claude, codex].compactMap { $0 }
+        providers = [claude, codex].compactMap { $0 }.map(keepingLastGoodWindows)
         lastUpdated = Date()
         isLoading = false
+        saveCache()
+    }
+
+    /// A rate limit or a dropped connection shouldn't blank out numbers we
+    /// already have. Keep the previous windows and let the view mark them as
+    /// stale, so a transient failure costs freshness rather than the whole card.
+    private func keepingLastGoodWindows(_ fresh: ProviderQuota) -> ProviderQuota {
+        guard fresh.error != nil, fresh.windows.isEmpty,
+              let previous = providers.first(where: { $0.provider == fresh.provider }),
+              !previous.windows.isEmpty
+        else { return fresh }
+
+        var merged = fresh
+        merged.windows = previous.windows
+        merged.stale = true
+        return merged
+    }
+
+    /// Seconds left on a 429 backoff, or nil when we're free to ask again.
+    private func backoffRemaining(_ provider: String) -> Int? {
+        guard let until = backoffUntil[provider], until > Date() else { return nil }
+        return max(1, Int(until.timeIntervalSinceNow.rounded(.up)))
+    }
+
+    /// "45s", "12m", "1h 5m" — a ban can run to an hour, and "3596s" reads as
+    /// noise rather than a duration.
+    static func backoffText(_ seconds: Int) -> String {
+        if seconds < 90 { return "\(seconds)s" }
+        let m = (seconds + 59) / 60
+        if m < 60 { return "\(m)m" }
+        return m % 60 == 0 ? "\(m / 60)h" : "\(m / 60)h \(m % 60)m"
+    }
+
+    /// Honour Retry-After when the server sends one; two minutes is a guess
+    /// that's long enough to actually clear a per-minute limit.
+    private func startBackoff(_ provider: String, response: URLResponse?) -> Int {
+        let header = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After")
+        let seconds = header.flatMap(Double.init) ?? 120
+        backoffUntil[provider] = Date().addingTimeInterval(seconds)
+        return Int(seconds)
     }
 
     // MARK: Reset timestamps
@@ -646,24 +741,70 @@ final class AIQuotaManager: ObservableObject {
     // MARK: Claude
 
     private func fetchClaude() async -> ProviderQuota? {
-        guard let token = claudeToken() else {
+        if let secs = backoffRemaining("Claude") {
+            return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
+        }
+        guard var cred = claudeToken() else {
             return ProviderQuota(provider: "Claude", windows: [], error: "No credentials found")
         }
+        // A request with an expired token is a guaranteed 401 — renew first.
+        if let expires = cred.expiresAt, expires < Date() {
+            guard let renewed = await refreshClaudeToken() else {
+                let ago = Self.backoffText(Int(-expires.timeIntervalSinceNow))
+                return ProviderQuota(provider: "Claude", windows: [],
+                                     error: "Token expired \(ago) ago — renew failed, run claude to log in")
+            }
+            cred = renewed
+        }
+        var retried = false
+        while true {
+            switch await requestClaudeUsage(token: cred.token) {
+            case .ok(let json):
+                return ProviderQuota(provider: "Claude", windows: parseClaudeWindows(json), error: nil)
+            case .unauthorized:
+                // The token claimed to be valid but wasn't (revoked, or the
+                // stored expiry lied). One refresh, one retry, then give up.
+                if !retried, let renewed = await refreshClaudeToken() {
+                    cred = renewed
+                    retried = true
+                    continue
+                }
+                return ProviderQuota(provider: "Claude", windows: [], error: "Session expired — log in again")
+            case .rateLimited(let resp):
+                let secs = startBackoff("Claude", response: resp)
+                return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
+            case .apiError(let code):
+                return ProviderQuota(provider: "Claude", windows: [], error: "API error (\(code))")
+            case .network:
+                return ProviderQuota(provider: "Claude", windows: [], error: "Network error")
+            }
+        }
+    }
+
+    private enum ClaudeUsageResult {
+        case ok([String: Any])
+        case unauthorized
+        case rateLimited(URLResponse?)
+        case apiError(Int)
+        case network
+    }
+
+    private func requestClaudeUsage(token: String) async -> ClaudeUsageResult {
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            if code == 401 { return ProviderQuota(provider: "Claude", windows: [], error: "Session expired — log in again") }
-            guard code == 200,
-                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return ProviderQuota(provider: "Claude", windows: [], error: "API error (\(code))")
+        guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return .network }
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        switch code {
+        case 200:
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return .apiError(200)
             }
-            return ProviderQuota(provider: "Claude", windows: parseClaudeWindows(json), error: nil)
-        } catch {
-            return ProviderQuota(provider: "Claude", windows: [], error: "Network error")
+            return .ok(json)
+        case 401: return .unauthorized
+        case 429: return .rateLimited(resp)
+        default:  return .apiError(code)
         }
     }
 
@@ -730,7 +871,65 @@ final class AIQuotaManager: ObservableObject {
                            note: note)
     }
 
-    private func claudeToken() -> String? {
+    /// Claude Code's public OAuth client id — the same one the CLI itself
+    /// presents when refreshing. We are not impersonating a different app:
+    /// we act as another reader/writer of the same local login, exactly like
+    /// a second concurrent Claude Code session.
+    private static let claudeOAuthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+    private static let claudeCredentialService = "Claude Code-credentials"
+
+    /// Exchange the stored refresh token for a fresh access token and write
+    /// the result back where Claude Code keeps it. The write-back is not
+    /// optional politeness: Anthropic rotates refresh tokens, so consuming
+    /// one without storing its replacement would strand the CLI's login.
+    private func refreshClaudeToken() async -> (token: String, expiresAt: Date?)? {
+        // Re-read at refresh time — another session may have renewed already.
+        let fromKeychain = keychainJSON(service: Self.claudeCredentialService)
+        let filePath = ("~/.claude/.credentials.json" as NSString).expandingTildeInPath
+        let fromFile: [String: Any]? = fromKeychain != nil ? nil
+            : FileManager.default.contents(atPath: filePath)
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        guard var json = fromKeychain ?? fromFile else { return nil }
+        guard let key = ["claudeAiOauth", "claude.ai_oauth"].first(where: { json[$0] is [String: Any] }),
+              var oauth = json[key] as? [String: Any],
+              let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty
+        else { return nil }
+
+        // Someone else may have refreshed since we saw the expired token.
+        if let cred = oauthAccessToken(json), let exp = cred.expiresAt, exp > Date().addingTimeInterval(60) {
+            return cred
+        }
+
+        var req = URLRequest(url: URL(string: "https://console.anthropic.com/v1/oauth/token")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "grant_type": "refresh_token",
+            "refresh_token": refreshToken,
+            "client_id": Self.claudeOAuthClientID,
+        ])
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let newToken = body["access_token"] as? String
+        else { return nil }
+
+        let expiresAt = (body["expires_in"] as? Double).map { Date().addingTimeInterval($0) }
+        oauth["accessToken"] = newToken
+        // Keep the old refresh token if the server didn't rotate it.
+        oauth["refreshToken"] = (body["refresh_token"] as? String) ?? refreshToken
+        if let expiresAt { oauth["expiresAt"] = expiresAt.timeIntervalSince1970 * 1000 }
+        json[key] = oauth
+
+        if fromKeychain != nil {
+            keychainWriteJSON(service: Self.claudeCredentialService, json: json)
+        } else if let data = try? JSONSerialization.data(withJSONObject: json) {
+            try? data.write(to: URL(fileURLWithPath: filePath), options: .atomic)
+        }
+        return (newToken, expiresAt)
+    }
+
+    private func claudeToken() -> (token: String, expiresAt: Date?)? {
         if let json = keychainJSON(service: "Claude Code-credentials"), let t = oauthAccessToken(json) { return t }
         let path = ("~/.claude/.credentials.json" as NSString).expandingTildeInPath
         if let data = FileManager.default.contents(atPath: path),
@@ -739,9 +938,15 @@ final class AIQuotaManager: ObservableObject {
         return nil
     }
 
-    private func oauthAccessToken(_ json: [String: Any]) -> String? {
+    private func oauthAccessToken(_ json: [String: Any]) -> (token: String, expiresAt: Date?)? {
         for key in ["claudeAiOauth", "claude.ai_oauth"] {
-            if let o = json[key] as? [String: Any], let t = o["accessToken"] as? String { return t }
+            guard let o = json[key] as? [String: Any], let t = o["accessToken"] as? String else { continue }
+            var expires: Date?
+            if let raw = (o["expiresAt"] as? Double) ?? (o["expiresAt"] as? NSNumber)?.doubleValue {
+                // Claude Code stores epoch milliseconds; tolerate seconds too.
+                expires = Date(timeIntervalSince1970: raw > 1e12 ? raw / 1000 : raw)
+            }
+            return (t, expires)
         }
         return nil
     }
@@ -749,6 +954,9 @@ final class AIQuotaManager: ObservableObject {
     // MARK: Codex
 
     private func fetchCodex() async -> ProviderQuota? {
+        if let secs = backoffRemaining("Codex") {
+            return ProviderQuota(provider: "Codex", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
+        }
         let path = ("~/.codex/auth.json" as NSString).expandingTildeInPath
         guard let data = FileManager.default.contents(atPath: path),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -769,6 +977,10 @@ final class AIQuotaManager: ObservableObject {
             let (respData, resp) = try await URLSession.shared.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if code == 401 { return ProviderQuota(provider: "Codex", windows: [], error: "Session expired — run 'codex' to renew") }
+            if code == 429 {
+                let secs = startBackoff("Codex", response: resp)
+                return ProviderQuota(provider: "Codex", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
+            }
             guard code == 200,
                   let j = try JSONSerialization.jsonObject(with: respData) as? [String: Any],
                   let rate = j["rate_limit"] as? [String: Any] else {
@@ -823,5 +1035,16 @@ final class AIQuotaManager: ObservableObject {
             return nil
         }
         return json
+    }
+
+    @discardableResult
+    private func keychainWriteJSON(service: String, json: [String: Any]) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: json) else { return false }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service
+        ]
+        let update: [String: Any] = [kSecValueData as String: data]
+        return SecItemUpdate(query as CFDictionary, update as CFDictionary) == errSecSuccess
     }
 }

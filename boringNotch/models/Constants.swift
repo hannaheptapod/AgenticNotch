@@ -110,8 +110,9 @@ extension Defaults.Keys {
     static let agentLiveActivityEnabled = Key<Bool>("agentLiveActivityEnabled", default: true)
     /// Give up on a run whose `done` never arrived after this many minutes.
     static let agentLiveMaxMinutes = Key<Double>("agentLiveMaxMinutes", default: 30)
-    /// How often the AI limits tab re-fetches usage while it is on screen.
-    static let quotaRefreshSeconds = Key<Double>("quotaRefreshSeconds", default: 60)
+    /// JSON-encoded last successful quota windows, so a restart mid-ban still
+    /// has numbers to show.
+    static let aiQuotaCache = Key<Data?>("aiQuotaCache", default: nil)
 
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)
