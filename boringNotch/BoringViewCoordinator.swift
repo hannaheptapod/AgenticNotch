@@ -744,11 +744,19 @@ final class AIQuotaManager: ObservableObject {
         if let secs = backoffRemaining("Claude") {
             return ProviderQuota(provider: "Claude", windows: [], error: "Rate limited — retrying in \(Self.backoffText(secs))")
         }
-        guard let token = claudeToken() else {
+        guard let cred = claudeToken() else {
             return ProviderQuota(provider: "Claude", windows: [], error: "No credentials found")
         }
+        // A request with an expired token is a guaranteed 401 — skip it and
+        // say what would fix it. Claude Code rewrites the keychain item when
+        // it next talks to the API, so any terminal `claude` turn heals this.
+        if let expires = cred.expiresAt, expires < Date() {
+            let ago = Self.backoffText(Int(-expires.timeIntervalSinceNow))
+            return ProviderQuota(provider: "Claude", windows: [],
+                                 error: "Token expired \(ago) ago — run claude in a terminal to renew")
+        }
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(cred.token)", forHTTPHeaderField: "Authorization")
         req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
@@ -832,7 +840,7 @@ final class AIQuotaManager: ObservableObject {
                            note: note)
     }
 
-    private func claudeToken() -> String? {
+    private func claudeToken() -> (token: String, expiresAt: Date?)? {
         if let json = keychainJSON(service: "Claude Code-credentials"), let t = oauthAccessToken(json) { return t }
         let path = ("~/.claude/.credentials.json" as NSString).expandingTildeInPath
         if let data = FileManager.default.contents(atPath: path),
@@ -841,9 +849,15 @@ final class AIQuotaManager: ObservableObject {
         return nil
     }
 
-    private func oauthAccessToken(_ json: [String: Any]) -> String? {
+    private func oauthAccessToken(_ json: [String: Any]) -> (token: String, expiresAt: Date?)? {
         for key in ["claudeAiOauth", "claude.ai_oauth"] {
-            if let o = json[key] as? [String: Any], let t = o["accessToken"] as? String { return t }
+            guard let o = json[key] as? [String: Any], let t = o["accessToken"] as? String else { continue }
+            var expires: Date?
+            if let raw = (o["expiresAt"] as? Double) ?? (o["expiresAt"] as? NSNumber)?.doubleValue {
+                // Claude Code stores epoch milliseconds; tolerate seconds too.
+                expires = Date(timeIntervalSince1970: raw > 1e12 ? raw / 1000 : raw)
+            }
+            return (t, expires)
         }
         return nil
     }
